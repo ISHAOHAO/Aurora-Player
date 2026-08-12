@@ -200,6 +200,51 @@ async function hdrEvaluate() {
   return result;
 }
 
+/* ---------------- 缩略图进程（规范 §4 SeekBar 缩略图气泡；消化 D13） ----------------
+   独立 mpv --vo=image --sstep=N 抽帧到 userData/thumbs/<hash>/；
+   悬停时按时间映射最近帧。网络流/短视频跳过。 */
+
+const crypto = require('crypto');
+let thumbProc = null;
+let thumbs = null;   // { dir, interval, count, files: string[]|null }
+
+function startThumbs(file, duration) {
+  stopThumbs();
+  if (!duration || duration < 15 || /^https?:/i.test(file)) return;
+  const key = crypto.createHash('md5').update(`${file}|${Math.round(duration)}`).digest('hex').slice(0, 12);
+  const dir = path.join(app.getPath('userData'), 'thumbs', key);
+  const interval = Math.max(2, Math.round(duration / 160));
+  thumbs = { dir, interval, duration, files: null };
+  // 缓存命中（.done 标记 + 有帧）
+  try {
+    if (fs.existsSync(path.join(dir, '.done'))) {
+      const existing = fs.readdirSync(dir).filter((f) => f.endsWith('.jpg')).sort();
+      if (existing.length) { thumbs.files = existing; return; }
+    }
+  } catch {}
+
+  fs.mkdirSync(dir, { recursive: true });
+  thumbProc = spawn(MPV_EXE, [
+    '--no-config', '--no-audio', '--no-sub',
+    '--vo=image', '--vo-image-format=jpg', '--vo-image-jpeg-quality=80',
+    `--vo-image-outdir=${dir}`, `--sstep=${interval}`,
+    '--no-terminal', file,
+  ], { stdio: 'ignore' });
+  thumbProc.on('exit', () => {
+    thumbProc = null;
+    if (!thumbs || thumbs.dir !== dir) return;
+    try {
+      thumbs.files = fs.readdirSync(dir).filter((f) => f.endsWith('.jpg')).sort();
+      if (thumbs.files.length) fs.writeFileSync(path.join(dir, '.done'), String(thumbs.files.length));
+    } catch {}
+  });
+}
+
+function stopThumbs() {
+  if (thumbProc) { thumbProc.kill(); thumbProc = null; }
+  thumbs = null;
+}
+
 /* ---------------- 元数据（轨道/章节，file-loaded 时拉取） ---------------- */
 
 async function refreshMetadata() {
@@ -240,20 +285,29 @@ function dlnaSendState() {
 }
 
 let lastStatus = { title: null, timePos: null, duration: null, pause: true, volume: 100, mute: false };
+let thumbsStarted = false;
 
 function startStatusPolling() {
   if (statusTimer) return;
   statusTimer = setInterval(async () => {
-    const [title, timePos, duration, pause, volume, mute] = await Promise.all([
+    const [title, timePos, duration, pause, volume, mute,
+      codec, vw, vh, fps, vfFps, drops, hwdec, vo, vb, ab, cacheDur] = await Promise.all([
       mpvGet('media-title'), mpvGet('time-pos'), mpvGet('duration'),
       mpvGet('pause'), mpvGet('volume'), mpvGet('mute'),
+      mpvGet('video-codec'), mpvGet('video-params/w'), mpvGet('video-params/h'),
+      mpvGet('container-fps'), mpvGet('estimated-vf-fps'), mpvGet('frame-drop-count'),
+      mpvGet('hwdec-current'), mpvGet('current-vo'),
+      mpvGet('video-bitrate'), mpvGet('audio-bitrate'), mpvGet('demuxer-cache-duration'),
     ]);
     lastStatus = { title, timePos, duration, pause, volume, mute };
-    const status = { ...lastStatus, path: currentPath, casting, idle: !mpvProc };
+    const stats = { codec, w: vw, h: vh, fps, vfFps, drops, hwdec, vo, vBitrate: vb, aBitrate: ab, cacheDur };
+    const status = { ...lastStatus, path: currentPath, casting, idle: !mpvProc, stats };
     pushStatus(status);
     dlnaSendState();
     // 记录续播位置
     if (currentPath && timePos != null && duration) updateRecentPosition(currentPath, timePos, duration);
+    // 首次拿到时长 → 启动缩略图抽帧
+    if (currentPath && duration && !thumbsStarted) { thumbsStarted = true; startThumbs(currentPath, duration); }
     // 显示器 HDR 能力热变化（系统 HDR 开关/跨屏拖动）→ 重跑决策链
     if (currentPath && detectDisplayHdr() !== lastDisplayHdr) refreshMetadata();
   }, 500);
@@ -325,6 +379,8 @@ function stopPlayback() {
   if (pipe && !pipe.destroyed) pipe.destroy();
   pipe = null;
   if (mpvProc) { mpvProc.kill(); mpvProc = null; }
+  stopThumbs();
+  thumbsStarted = false;
   if (videoWin && !videoWin.isDestroyed()) videoWin.destroy();
   videoWin = null;
   currentPath = null;
@@ -483,6 +539,18 @@ ipcMain.handle('settings:set', (_e, patch) => {
 ipcMain.handle('hdr:override', async (_e, o) => {
   hdrOverride = { mode: o?.mode || 'auto', algo: o?.algo || null };
   await refreshMetadata();   // 重跑决策链并推送新 meta
+});
+
+/* 缩略图查询：时间 → 最近帧 file:// URL（按实际帧数比例映射，缓存未就绪返回 null） */
+ipcMain.handle('thumbs:nearest', (_e, time) => {
+  if (!thumbs) return null;
+  if (!thumbs.files) {
+    try { thumbs.files = fs.readdirSync(thumbs.dir).filter((f) => f.endsWith('.jpg')).sort(); } catch { return null; }
+  }
+  const len = thumbs.files.length;
+  if (!len) return null;
+  const idx = Math.min(Math.max(0, Math.floor((time / thumbs.duration) * len)), len - 1);
+  return 'file:///' + path.join(thumbs.dir, thumbs.files[idx]).replace(/\\/g, '/');
 });
 
 /* 载入外部字幕（规范 §3.3 字幕页） */

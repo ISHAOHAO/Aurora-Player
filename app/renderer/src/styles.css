@@ -472,10 +472,12 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
 }
 .seek-bubble {
   position: absolute; bottom: 22px; transform: translateX(-50%);
-  padding: 4px 10px; border-radius: 8px;
+  padding: 5px; border-radius: 10px;
   font-size: 12px; color: var(--ov-text); white-space: nowrap;
-  pointer-events: none; z-index: 5;
+  pointer-events: none; z-index: 5; text-align: center;
 }
+.seek-bubble img { width: 160px; height: 90px; object-fit: cover; border-radius: 6px; display: block; margin-bottom: 4px; }
+.seek-bubble .timecode { padding: 0 6px; }
 .seek-bubble .ch { color: var(--ov-text-2); margin-left: 6px; }
 
 /* ---------- 控制台抽屉（规范 §3.3，360px Glass-2） ---------- */

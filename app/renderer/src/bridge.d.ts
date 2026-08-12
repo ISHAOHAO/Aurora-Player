@@ -7,6 +7,20 @@ export interface RecentItem {
   duration?: number;
 }
 
+export interface PlayerStats {
+  codec: string | null;
+  w: number | null;
+  h: number | null;
+  fps: number | null;
+  vfFps: number | null;
+  drops: number | null;
+  hwdec: string | null;
+  vo: string | null;
+  vBitrate: number | null;
+  aBitrate: number | null;
+  cacheDur: number | null;
+}
+
 export interface PlayerStatus {
   title: string | null;
   path: string | null;
@@ -17,6 +31,7 @@ export interface PlayerStatus {
   mute: boolean | null;
   idle: boolean;
   casting?: { cp: string; title?: string } | null;
+  stats?: PlayerStats;
 }
 
 export interface DlnaState {
@@ -101,6 +116,8 @@ export interface AuroraBridge {
   setHdrOverride: (o: { mode: string; algo?: string | null }) => Promise<void>;
   /** 载入外部字幕(文件对话框 → sub-add) */
   addSubtitle: () => Promise<void>;
+  /** 缩略图查询：时间(s) → 最近帧 file:// URL，未就绪返回 null */
+  getThumb: (time: number) => Promise<string | null>;
   /** 手动窗口拖拽（透明窗 app-region 失效的替代方案） */
   dragStart: () => void;
   dragEnd: () => void;

@@ -41,13 +41,14 @@ function TrackMenu({ title, tracks, onPick, onClose, allowOff }: {
 }
 
 /* ================= 控制台抽屉（规范 §3.3 子集） ================= */
-type Tab = 'basic' | 'video' | 'audio' | 'sub';
+type Tab = 'basic' | 'video' | 'audio' | 'sub' | 'adv';
 
 const HDR_MODE_LABEL = { passthrough: '直通', tonemap: '色调映射', sdr: '原生 SDR' } as const;
 const TONE_ALGOS = ['spline', 'bt.2390', 'bt.2446a', 'hable', 'mobius', 'reinhard', 'clip'];
 
-function ConsoleDrawer({ meta, onLocalMeta, onClose }: {
+function ConsoleDrawer({ meta, status, onLocalMeta, onClose }: {
   meta: PlayerMeta | null;
+  status: PlayerStatus | null;
   onLocalMeta: (m: PlayerMeta) => void;
   onClose: () => void;
 }) {
@@ -92,7 +93,7 @@ function ConsoleDrawer({ meta, onLocalMeta, onClose }: {
         <button className={tab === 'video' ? 'on' : ''} onClick={() => setTab('video')}>视频</button>
         <button className={tab === 'audio' ? 'on' : ''} onClick={() => setTab('audio')}>音频</button>
         <button className={tab === 'sub' ? 'on' : ''} onClick={() => setTab('sub')}>字幕</button>
-        <button disabled title="M5+">高级</button>
+        <button className={tab === 'adv' ? 'on' : ''} onClick={() => setTab('adv')}>高级</button>
         <div style={{ flex: 1 }} />
         <button onClick={onClose} title="关闭">✕</button>
       </div>
@@ -222,6 +223,22 @@ function ConsoleDrawer({ meta, onLocalMeta, onClose }: {
             </div>
           </>
         )}
+        {tab === 'adv' && (
+          <div className="row">
+            <label>实时性能（2Hz）</label>
+            <div className="info-grid">
+              <span>编码</span><span>{status?.stats?.codec || '—'}</span>
+              <span>分辨率</span><span>{status?.stats?.w ? `${status.stats.w}×${status.stats.h}` : '—'}</span>
+              <span>硬件解码</span><span>{status?.stats?.hwdec || '—'}</span>
+              <span>输出</span><span>{status?.stats?.vo || '—'}</span>
+              <span>帧率</span><span>{status?.stats?.fps ? `${status.stats.fps.toFixed(2)} fps（容器） / ${(status.stats.vfFps ?? 0).toFixed(2)} fps（实际）` : '—'}</span>
+              <span>丢帧</span><span>{status?.stats?.drops ?? '—'}</span>
+              <span>视频码率</span><span>{status?.stats?.vBitrate ? `${(status.stats.vBitrate / 1e6).toFixed(2)} Mbps` : '—'}</span>
+              <span>音频码率</span><span>{status?.stats?.aBitrate ? `${Math.round(status.stats.aBitrate / 1e3)} kbps` : '—'}</span>
+              <span>缓存</span><span>{status?.stats?.cacheDur != null ? `${status.stats.cacheDur.toFixed(1)}s` : '—'}</span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -235,7 +252,7 @@ export default function Player() {
   const [menu, setMenu] = useState<'sub' | 'audio' | null>(null);
   const [drawer, setDrawer] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
-  const [bubble, setBubble] = useState<{ x: number; t: number; ch: string | null } | null>(null);
+  const [bubble, setBubble] = useState<{ x: number; t: number; ch: string | null; thumb: string | null } | null>(null);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -305,13 +322,21 @@ export default function Player() {
     const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
     window.aurora.mpv('seek', frac * 100, 'absolute-percent');
   };
+  const lastThumbT = useRef(-1);
   const onSeekHover = (e: React.PointerEvent<HTMLDivElement>) => {
     if (dur <= 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
     const t = frac * dur;
     const ch = meta?.chapters.filter((c) => c.time <= t).pop()?.title ?? null;
-    setBubble({ x: e.clientX - rect.left, t, ch });
+    setBubble((b) => ({ x: e.clientX - rect.left, t, ch, thumb: b && Math.abs(b.t - t) < 2 ? b.thumb : null }));
+    // 缩略图：时间跨档才重新查询，避免高频 IPC
+    if (Math.abs(t - lastThumbT.current) >= 2) {
+      lastThumbT.current = t;
+      window.aurora.getThumb(t).then((url) => {
+        if (url) setBubble((b) => (b && Math.abs(b.t - t) < 2 ? { ...b, thumb: url } : b));
+      });
+    }
   };
 
   const pos = status?.timePos ?? 0;
@@ -396,6 +421,7 @@ export default function Player() {
         <div className="seek-zone" onPointerLeave={() => setBubble(null)}>
           {bubble && dur > 0 && (
             <div className="seek-bubble glass-2" style={{ left: bubble.x }}>
+              {bubble.thumb && <img src={bubble.thumb} alt="" draggable={false} />}
               <span className="timecode">{fmt(bubble.t)}</span>
               {bubble.ch && <span className="ch">{bubble.ch}</span>}
             </div>
@@ -459,7 +485,7 @@ export default function Player() {
       {menu === 'audio' && <TrackMenu title="音轨" tracks={audioTracks} onPick={(id) => pickTrack('audio', id)} onClose={() => setMenu(null)} />}
 
       {/* 控制台抽屉 */}
-      {drawer && <ConsoleDrawer meta={meta} onLocalMeta={setMeta} onClose={() => setDrawer(false)} />}
+      {drawer && <ConsoleDrawer meta={meta} status={status} onLocalMeta={setMeta} onClose={() => setDrawer(false)} />}
 
       {/* 右键菜单 */}
       {ctxMenu && (

@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('aurora', {
   toggleFullscreen: () => ipcRenderer.invoke('app:toggle-fullscreen'),
   setHdrOverride: (o) => ipcRenderer.invoke('hdr:override', o),
   addSubtitle: () => ipcRenderer.invoke('sub:add'),
+  getThumb: (time) => ipcRenderer.invoke('thumbs:nearest', time),
   dragStart: () => ipcRenderer.send('win:drag-start'),
   dragEnd: () => ipcRenderer.send('win:drag-end'),
   resizeStart: (dir) => ipcRenderer.send('win:resize-start', dir),
