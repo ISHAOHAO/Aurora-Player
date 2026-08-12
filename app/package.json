@@ -1,0 +1,24 @@
+{
+  "name": "aurora-player",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Aurora Player — Win11 沉浸式视频播放器 (M2 完整 UI)",
+  "main": "main/main.js",
+  "scripts": {
+    "build": "vite build renderer",
+    "start": "electron .",
+    "dev": "npm run build && electron ."
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "electron": "^43.4.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  }
+}

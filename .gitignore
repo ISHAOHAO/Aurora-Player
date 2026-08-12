@@ -1,0 +1,15 @@
+# 依赖与产物
+node_modules/
+app/renderer/dist/
+
+# 运行时二进制与测试素材（mpv 构建、生成的测试片）
+runtime/
+
+# 日志与本地状态
+*.log
+app/scripts/shot*.png
+
+# 工具本地目录（skills CLI 安装物，skills-lock.json 保留）
+.agents/
+.claude/
+agent/
