@@ -5,7 +5,7 @@
  *   videoWin  播放窗口：transparent 透明窗，React #/player 自绘控制层在上，
  *             mpv --wid 子窗口嵌入在下层透出（单窗方案，无独立叠加窗）
  */
-const { app, BrowserWindow, Menu, dialog, ipcMain, utilityProcess } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, utilityProcess, Tray, nativeImage, screen } = require('electron');
 const { spawn } = require('child_process');
 const net = require('net');
 const path = require('path');
@@ -18,7 +18,31 @@ const DIST_HTML = path.join(__dirname, '..', 'renderer', 'dist', 'index.html');
 const PRELOAD = path.join(__dirname, '..', 'preload', 'preload.js');
 const DLNA_ENTRY = path.join(__dirname, '..', 'dlna', 'dlna.js');
 const RECENT_FILE = () => path.join(app.getPath('userData'), 'recent.json');
+const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 const RECENT_CAP = 20;
+
+/* ---------------- 设置（规范 §3.4） ---------------- */
+const DEFAULT_SETTINGS = {
+  theme: 'auto',            // auto | light | dark
+  rememberPosition: true,
+  volumeStep: 2,            // 滚轮步进
+  defaultVolume: 100,
+  subFontSize: 34,
+  hdrMode: 'auto',          // auto | passthrough | tonemap
+  hdrAlgo: 'spline',
+  dlnaEnabled: true,
+  dlnaFriendlyName: 'Aurora Player',
+  bgCasting: false,         // 后台接收投屏（关窗不退应用）
+};
+
+function readSettings() {
+  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE(), 'utf8')) }; }
+  catch { return { ...DEFAULT_SETTINGS }; }
+}
+let settings = readSettings();
+function writeSettings() {
+  try { fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(settings, null, 2)); } catch {}
+}
 
 let homeWin = null;
 let videoWin = null;
@@ -28,6 +52,7 @@ let casting = null;          // { cp, title } — DLNA 投屏会话标识
 let dlnaProc = null;
 let dlnaState = { running: false, friendlyName: 'Aurora Player', port: 0 };
 let videoFs = false;         // 透明窗 isFullScreen() 回报不可靠，事件自行跟踪
+let quitting = false;        // 托盘/菜单退出标志（bgCasting 模式下区分关窗与退出）
 
 let pipe = null;
 let reqSeq = 0;
@@ -88,6 +113,9 @@ function connectPipe(retriesLeft) {
         pending.get(msg.request_id)(msg);
         pending.delete(msg.request_id);
       } else if (msg.event === 'file-loaded') {
+        // 应用设置默认值（每新文件一次）
+        mpvCommand('set_property', 'volume', settings.defaultVolume);
+        mpvCommand('set_property', 'sub-font-size', settings.subFontSize);
         refreshMetadata();
       } else if (msg.event === 'video-reconfig') {
         // 视频参数就绪/变化（解码器重初始化后 video-params 才可用）→ 重跑决策链（去抖）
@@ -117,7 +145,7 @@ const mpvGet = (prop) =>
 
 /* ---------------- HDR 画质决策链（docs/02 §4.3） ---------------- */
 
-let hdrOverride = { mode: 'auto', algo: null };   // 控制台"视频"分页的用户覆盖
+let hdrOverride = { mode: 'auto', algo: null };   // 启动后由 settings 初始化（见 whenReady）
 let lastDisplayHdr = false;
 let lastLogSize = 0;
 
@@ -249,6 +277,7 @@ function addRecent(file) {
 }
 
 function updateRecentPosition(file, timePos, duration) {
+  if (!settings.rememberPosition) return;
   const list = readRecent();
   const it = list.find((x) => x.path === file);
   if (!it) return;
@@ -305,10 +334,38 @@ function stopPlayback() {
   dlnaSendState();
 }
 
+/* ---------------- 防火墙自检（规格 §9：缺失则添加，结果记日志） ---------------- */
+
+function ensureFirewallRules(port) {
+  const { execFile } = require('child_process');
+  const logFile = path.join(app.getPath('userData'), 'logs', 'dlna.log');
+  const log = (s) => { try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] [fw] ${s}\n`); } catch {} };
+  const rules = [
+    ['Aurora Player DLNA', 'TCP', String(port)],
+    ['Aurora Player SSDP', 'UDP', '1900'],
+  ];
+  for (const [name, proto, lport] of rules) {
+    execFile('netsh', ['advfirewall', 'firewall', 'show', 'rule', `name=${name}`], (err, stdout) => {
+      if (!err && stdout && stdout.includes(name)) return;   // 已存在
+      execFile('netsh', ['advfirewall', 'firewall', 'add', 'rule',
+        `name=${name}`, 'dir=in', 'action=allow', `protocol=${proto}`, `localport=${lport}`],
+        (e2) => log(e2 ? `添加失败 ${name}: ${e2.message}(需管理员)` : `已添加入站规则 ${name} ${proto}/${lport}`));
+    });
+  }
+}
+
 /* ---------------- DLNA 独立进程（规格 docs/03；utilityProcess, Node 语义） ---------------- */
 
 function startDlna() {
+  if (!settings.dlnaEnabled) { dlnaState = { ...dlnaState, running: false }; return; }
   const userData = app.getPath('userData');
+  // settings 为 friendlyName 唯一事实源 → 同步进 dlna 配置
+  const dlnaCfgFile = path.join(userData, 'dlna.json');
+  try {
+    const c = JSON.parse(fs.readFileSync(dlnaCfgFile, 'utf8'));
+    c.friendlyName = settings.dlnaFriendlyName;
+    fs.writeFileSync(dlnaCfgFile, JSON.stringify(c, null, 2));
+  } catch {}
   fs.mkdirSync(path.join(userData, 'logs'), { recursive: true });
   dlnaProc = utilityProcess.fork(DLNA_ENTRY, [], {
     env: {
@@ -325,6 +382,8 @@ function startDlna() {
     if (!m) return;
     if (m.type === 'ready') {
       dlnaState = { running: true, friendlyName: m.friendlyName, port: m.port };
+      updateTrayMenu();
+      ensureFirewallRules(m.port);
       return;
     }
     if (m.type !== 'cmd') return;
@@ -346,11 +405,9 @@ function startDlna() {
   });
 }
 
-/* ---------------- IPC ---------------- */
+/* ---------------- 打开文件流程（菜单/首页/托盘共用） ---------------- */
 
-ipcMain.handle('mpv:command', (_e, args) => mpvCommand(...args));
-
-ipcMain.handle('app:open-file', async () => {
+async function openFileFlow() {
   const target = videoWin && !videoWin.isDestroyed() ? videoWin : homeWin;
   const { canceled, filePaths } = await dialog.showOpenDialog(target, {
     title: '打开视频文件',
@@ -362,15 +419,86 @@ ipcMain.handle('app:open-file', async () => {
   });
   if (canceled || !filePaths[0]) return;
   startPlayback(filePaths[0]);
-});
+}
+
+/* ---------------- 托盘（规范 §4 TrayMenu；bgCasting 待机模式宿主） ---------------- */
+
+let tray = null;
+
+function showHome() {
+  if (homeWin && !homeWin.isDestroyed()) {
+    homeWin.show();
+    homeWin.focus();
+  } else {
+    createHomeWindow();
+  }
+}
+
+function updateTrayMenu() {
+  if (!tray) return;
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '显示播放器', click: showHome },
+    { label: '打开视频…', click: () => openFileFlow() },
+    { type: 'separator' },
+    { label: `DLNA：${dlnaState.running ? `在线 · ${dlnaState.friendlyName}` : '未运行'}`, enabled: false },
+    { type: 'separator' },
+    { label: '退出', click: () => { quitting = true; app.quit(); } },
+  ]));
+}
+
+function createTray() {
+  const { makeIcon } = require('../dlna/xml');
+  tray = new Tray(nativeImage.createFromBuffer(makeIcon(32)));
+  tray.setToolTip('Aurora Player');
+  tray.on('click', showHome);
+  updateTrayMenu();
+}
+
+/* ---------------- IPC ---------------- */
+
+ipcMain.handle('mpv:command', (_e, args) => mpvCommand(...args));
+
+ipcMain.handle('app:open-file', () => openFileFlow());
 
 ipcMain.handle('app:open-path', (_e, file, seek) => startPlayback(file, seek));
 ipcMain.handle('app:stop', () => stopPlayback());
 ipcMain.handle('recent:list', () => readRecent());
 ipcMain.handle('dlna:state', () => dlnaState);
+ipcMain.handle('settings:get', () => settings);
+ipcMain.handle('settings:set', (_e, patch) => {
+  const dlnaKeys = ['dlnaEnabled', 'dlnaFriendlyName'];
+  const needDlnaRestart = dlnaKeys.some((k) => k in patch && patch[k] !== settings[k]);
+  settings = { ...settings, ...patch };
+  writeSettings();
+  if ('hdrMode' in patch || 'hdrAlgo' in patch) {
+    hdrOverride = { mode: settings.hdrMode, algo: settings.hdrAlgo };
+    if (currentPath) refreshMetadata();
+  }
+  if (needDlnaRestart) {
+    if (dlnaProc) { dlnaProc.kill(); dlnaProc = null; }
+    startDlna();
+  }
+  return settings;
+});
 ipcMain.handle('hdr:override', async (_e, o) => {
   hdrOverride = { mode: o?.mode || 'auto', algo: o?.algo || null };
   await refreshMetadata();   // 重跑决策链并推送新 meta
+});
+
+/* 载入外部字幕（规范 §3.3 字幕页） */
+ipcMain.handle('sub:add', async () => {
+  if (!videoWin || videoWin.isDestroyed()) return;
+  const { canceled, filePaths } = await dialog.showOpenDialog(videoWin, {
+    title: '载入外部字幕',
+    properties: ['openFile'],
+    filters: [
+      { name: '字幕文件', extensions: ['srt', 'ass', 'ssa', 'vtt', 'sub', 'idx'] },
+      { name: '所有文件', extensions: ['*'] },
+    ],
+  });
+  if (canceled || !filePaths[0]) return;
+  await mpvCommand('sub-add', filePaths[0], 'select');
+  refreshMetadata();   // 新字幕轨进轨道列表
 });
 ipcMain.handle('app:toggle-fullscreen', () => {
   if (videoWin && !videoWin.isDestroyed()) videoWin.setFullScreen(!videoFs);
@@ -378,7 +506,6 @@ ipcMain.handle('app:toggle-fullscreen', () => {
 
 /* 手动拖拽：透明窗在 Windows 上 -webkit-app-region:drag 失效（Electron 已知问题），
    改为渲染层报起止，主进程跟随光标语义移动（16ms 节流） */
-const { screen } = require('electron');
 let dragTimer = null;
 ipcMain.on('win:drag-start', () => {
   if (!videoWin || videoWin.isDestroyed() || videoWin.isFullScreen()) return;
@@ -432,6 +559,13 @@ function createHomeWindow() {
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
   });
   homeWin.loadFile(DIST_HTML, { hash: '/home' });
+  homeWin.on('close', (e) => {
+    // 后台接收投屏（规格 §9 待机模式）：关窗 → 隐藏到托盘，DLNA 保持可发现
+    if (settings.bgCasting && !quitting) {
+      e.preventDefault();
+      homeWin.hide();
+    }
+  });
   homeWin.on('closed', () => { homeWin = null; });
 }
 
@@ -458,7 +592,9 @@ app.whenReady().then(() => {
     app.quit();
     return;
   }
+  hdrOverride = { mode: settings.hdrMode, algo: settings.hdrAlgo };
   buildMenu();
+  createTray();
   startDlna();
   // 命令行带视频文件路径时直接播放（文件关联/拖放 exe 的基础）
   const fileArg = process.argv.slice(2).find((a) => fs.existsSync(a) && fs.statSync(a).isFile());
@@ -467,6 +603,7 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', () => {
+  quitting = true;
   stopPlayback();
   if (dlnaProc) { dlnaProc.kill(); dlnaProc = null; }
 });

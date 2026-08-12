@@ -199,6 +199,12 @@ function ConsoleDrawer({ meta, onLocalMeta, onClose }: {
               </div>
             </div>
             <div className="row">
+              <label>外部字幕</label>
+              <div className="seg">
+                <button onClick={() => window.aurora.addSubtitle()}>载入字幕文件…</button>
+              </div>
+            </div>
+            <div className="row">
               <label>字幕延迟<span className="val timecode">{subDelay.toFixed(1)}s</span></label>
               <div className="stepper">
                 <button onClick={() => { const v = +(subDelay - 0.1).toFixed(1); setSubDelay(v); set('sub-delay', v); }}>−</button>
@@ -235,6 +241,10 @@ export default function Player() {
 
   useEffect(() => window.aurora.onStatus(setStatus), []);
   useEffect(() => window.aurora.onMeta(setMeta), []);
+
+  // 设置项（滚轮步进）
+  const volStep = useRef(2);
+  useEffect(() => { window.aurora.getSettings().then((s) => { volStep.current = s.volumeStep || 2; }); }, []);
 
   /* ----- 自动隐藏（播放中 3s 无操作；暂停/菜单/抽屉打开时常驻） ----- */
   const paused = status?.pause ?? true;
@@ -340,7 +350,7 @@ export default function Player() {
     <div
       className={`overlay${ready ? ' ready' : ''}${idle && !pinned ? ' idle' : ''}`}
       onClick={onVideoClick}
-      onWheel={(e) => window.aurora.mpv('add', 'volume', e.deltaY < 0 ? 2 : -2)}
+      onWheel={(e) => window.aurora.mpv('add', 'volume', e.deltaY < 0 ? volStep.current : -volStep.current)}
       onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
     >
       {/* 顶部拖拽条：拖动移窗，双击全屏；阻断单击穿透到播放暂停 */}
@@ -459,6 +469,7 @@ export default function Player() {
           <button className="mi" onClick={() => { window.aurora.toggleFullscreen(); setCtxMenu(null); }}>全屏</button>
           <div className="sep" />
           <button className="mi" onClick={() => { window.aurora.openFile(); setCtxMenu(null); }}>打开文件…</button>
+          <button className="mi" onClick={() => { window.aurora.addSubtitle(); setCtxMenu(null); }}>载入外部字幕…</button>
           <button className="mi" onClick={() => { window.aurora.stop(); setCtxMenu(null); }}>停止并返回首页</button>
         </div>
       )}

@@ -25,6 +25,19 @@ export interface DlnaState {
   port: number;
 }
 
+export interface Settings {
+  theme: 'auto' | 'light' | 'dark';
+  rememberPosition: boolean;
+  volumeStep: number;
+  defaultVolume: number;
+  subFontSize: number;
+  hdrMode: string;
+  hdrAlgo: string;
+  dlnaEnabled: boolean;
+  dlnaFriendlyName: string;
+  bgCasting: boolean;
+}
+
 export interface Track {
   id: number;
   type: 'video' | 'audio' | 'sub';
@@ -75,6 +88,9 @@ export interface AuroraBridge {
   getRecent: () => Promise<RecentItem[]>;
   /** DLNA 服务状态 */
   getDlnaState: () => Promise<DlnaState>;
+  /** 设置读取/部分更新(返回合并后完整设置) */
+  getSettings: () => Promise<Settings>;
+  setSettings: (patch: Partial<Settings>) => Promise<Settings>;
   /** 播放状态推送(播放会话期间 ~2Hz) */
   onStatus: (cb: (s: PlayerStatus) => void) => () => void;
   /** 元数据推送(file-loaded 时:轨道/章节) */
@@ -83,6 +99,8 @@ export interface AuroraBridge {
   toggleFullscreen: () => Promise<void>;
   /** HDR 覆盖：mode auto/passthrough/tonemap, algo 色调映射算法 */
   setHdrOverride: (o: { mode: string; algo?: string | null }) => Promise<void>;
+  /** 载入外部字幕(文件对话框 → sub-add) */
+  addSubtitle: () => Promise<void>;
   /** 手动窗口拖拽（透明窗 app-region 失效的替代方案） */
   dragStart: () => void;
   dragEnd: () => void;
