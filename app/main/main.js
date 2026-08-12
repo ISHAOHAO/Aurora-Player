@@ -27,6 +27,7 @@ let currentPath = null;
 let casting = null;          // { cp, title } — DLNA 投屏会话标识
 let dlnaProc = null;
 let dlnaState = { running: false, friendlyName: 'Aurora Player', port: 0 };
+let videoFs = false;         // 透明窗 isFullScreen() 回报不可靠，事件自行跟踪
 
 let pipe = null;
 let reqSeq = 0;
@@ -281,6 +282,9 @@ function startPlayback(file, seek, castingInfo) {
     spawnMpv(hwnd, file, seek);
   });
 
+  videoWin.on('enter-full-screen', () => { videoFs = true; });
+  videoWin.on('leave-full-screen', () => { videoFs = false; });
+
   videoWin.on('closed', () => {
     videoWin = null;
     stopPlayback();
@@ -296,6 +300,7 @@ function stopPlayback() {
   videoWin = null;
   currentPath = null;
   casting = null;
+  videoFs = false;
   lastStatus = { title: null, timePos: null, duration: null, pause: true, volume: 100, mute: false };
   dlnaSendState();
 }
@@ -368,7 +373,7 @@ ipcMain.handle('hdr:override', async (_e, o) => {
   await refreshMetadata();   // 重跑决策链并推送新 meta
 });
 ipcMain.handle('app:toggle-fullscreen', () => {
-  if (videoWin && !videoWin.isDestroyed()) videoWin.setFullScreen(!videoWin.isFullScreen());
+  if (videoWin && !videoWin.isDestroyed()) videoWin.setFullScreen(!videoFs);
 });
 
 /* 手动拖拽：透明窗在 Windows 上 -webkit-app-region:drag 失效（Electron 已知问题），
