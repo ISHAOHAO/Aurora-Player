@@ -33,6 +33,7 @@ const DEFAULT_SETTINGS = {
   dlnaEnabled: true,
   dlnaFriendlyName: 'Aurora Player',
   bgCasting: false,         // 后台接收投屏（关窗不退应用）
+  libraryFolders: [],       // 媒体库文件夹
 };
 
 function readSettings() {
@@ -477,6 +478,166 @@ async function openFileFlow() {
   startPlayback(filePaths[0]);
 }
 
+/* ---------------- 媒体库（本地刮削：文件名解析 + nfo + 同目录封面；无在线依赖） ---------------- */
+
+const LIBRARY_FILE = () => path.join(app.getPath('userData'), 'library.json');
+const POSTER_DIR = () => path.join(app.getPath('userData'), 'posters');
+const VIDEO_EXTS = new Set(['mkv', 'mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'ts', 'm2ts', 'rmvb', 'mpg', 'mpeg']);
+const POSTER_NAMES = ['poster.jpg', 'poster.png', 'folder.jpg', 'cover.jpg', 'cover.png'];
+
+let library = [];
+try { library = JSON.parse(fs.readFileSync(LIBRARY_FILE(), 'utf8')); } catch {}
+let scanning = false;
+
+function saveLibrary() {
+  try { fs.writeFileSync(LIBRARY_FILE(), JSON.stringify(library, null, 2)); } catch {}
+}
+
+function notifyLibrary() {
+  if (homeWin && !homeWin.isDestroyed()) homeWin.webContents.send('library:updated', library);
+}
+
+/** 文件名解析：标题/年份/剧集号（S01E02 / E02 / 第02集） */
+function parseName(filename) {
+  const base = filename.replace(/\.[^.]+$/, '');
+  let title = base, year = null, season = null, episode = null;
+  let m = base.match(/[Ss](\d{1,2})[Ee](\d{1,3})/) || base.match(/第\s*(\d{1,3})\s*[集话]/);
+  if (m) {
+    if (m.length === 3) { season = +m[1]; episode = +m[2]; } else { episode = +m[1]; }
+    title = base.slice(0, m.index);
+  }
+  // 年份取最后一个 19xx/20xx 匹配（片名自带数字年份时，发行年通常在后："Blade.Runner.2049.2017.1080p"）
+  const years = [...title.matchAll(/(?:19|20)\d{2}/g)];
+  if (years.length) {
+    const last = years[years.length - 1];
+    year = +last[0];
+    title = title.slice(0, last.index);
+  }
+  title = title
+    .replace(/[\[【(（].*?(?:[\]】)）])/g, ' ')    // 制作组/标签括号
+    .replace(/[._]+/g, ' ')
+    .replace(/\b(1080p|720p|2160p|4k|8k|bluray|blu-ray|web-?dl|webrip|hdtv|hdr|hevc|x26[45]|avc|aac|dts|remux)\b.*$/i, '')
+    .replace(/[-–—\s]+$/, '')
+    .trim();
+  return { title: title || base, year, season, episode };
+}
+
+/** nfo 容错解析（<title>/<year>） */
+function readNfo(dir, base) {
+  for (const name of [`${base}.nfo`, 'movie.nfo', 'tvshow.nfo']) {
+    try {
+      const xml = fs.readFileSync(path.join(dir, name), 'utf8');
+      if (/<!DOCTYPE|<!ENTITY/i.test(xml)) continue;
+      const t = xml.match(/<title>([^<]+)<\/title>/i);
+      const y = xml.match(/<year>(\d{4})<\/year>/i);
+      if (t) return { title: t[1].trim(), year: y ? +y[1] : null };
+    } catch {}
+  }
+  return null;
+}
+
+/** 同目录封面探测 */
+function findPoster(dir, base) {
+  for (const name of [...POSTER_NAMES, `${base}-poster.jpg`, `${base}.jpg`]) {
+    const p = path.join(dir, name);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+/** 递归收集视频文件（深度≤4，跳隐藏目录，上限 2000） */
+function walkVideos(dir, depth = 0, out = []) {
+  if (depth > 4 || out.length > 2000) return out;
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const e of entries) {
+    if (e.name.startsWith('.') || e.name.startsWith('$')) continue;
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) walkVideos(full, depth + 1, out);
+    else if (VIDEO_EXTS.has(e.name.split('.').pop().toLowerCase())) out.push(full);
+  }
+  return out;
+}
+
+let coverQueue = [];
+let coverRunning = false;
+
+/** 无封面 → mpv 抽帧生成（8% 处一帧，jpg） */
+function queueCover(item) {
+  coverQueue.push(item);
+  if (coverRunning) return;
+  coverRunning = true;
+  const next = () => {
+    const it = coverQueue.shift();
+    if (!it) { coverRunning = false; return; }
+    const out = path.join(POSTER_DIR(), crypto.createHash('md5').update(it.path).digest('hex').slice(0, 12) + '.jpg');
+    const tmpDir = path.join(POSTER_DIR(), '_tmp');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const proc = spawn(MPV_EXE, [
+      '--no-config', '--no-audio', '--no-sub', '--frames=1', '--start=8%',
+      '--vo=image', '--vo-image-format=jpg', '--vo-image-jpeg-quality=82',
+      `--vo-image-outdir=${tmpDir}`, '--no-terminal', it.path,
+    ], { stdio: 'ignore' });
+    const done = () => {
+      try {
+        const f = fs.readdirSync(tmpDir).filter((x) => x.endsWith('.jpg'))[0];
+        if (f) {
+          fs.renameSync(path.join(tmpDir, f), out);
+          it.poster = out;
+          saveLibrary();
+          notifyLibrary();
+        }
+      } catch {}
+      next();
+    };
+    proc.on('exit', done);
+    proc.on('error', done);
+    setTimeout(() => { try { proc.kill(); } catch {} }, 20000).unref?.();   // 单帧 20s 超时保护
+  };
+  next();
+}
+
+function scanLibrary() {
+  if (scanning) return;
+  scanning = true;
+  try {
+    const seen = new Map(library.map((it) => [it.path, it]));
+    const next = [];
+    for (const folder of settings.libraryFolders || []) {
+      for (const file of walkVideos(folder)) {
+        const st = fs.statSync(file, { throwIfNoEntry: false });
+        if (!st) continue;
+        const old = seen.get(file);
+        if (old && old.mtime === st.mtimeMs && old.size === st.size) { next.push(old); continue; }
+        const dir = path.dirname(file);
+        const base = path.basename(file).replace(/\.[^.]+$/, '');
+        const parsed = parseName(path.basename(file));
+        const nfo = readNfo(dir, base);
+        const item = {
+          path: file,
+          name: path.basename(file),
+          title: nfo?.title || parsed.title,
+          year: nfo?.year || parsed.year,
+          season: parsed.season, episode: parsed.episode,
+          size: st.size, mtime: st.mtimeMs,
+          poster: findPoster(dir, base) || null,
+        };
+        if (!item.poster) {
+          const gen = path.join(POSTER_DIR(), crypto.createHash('md5').update(file).digest('hex').slice(0, 12) + '.jpg');
+          if (fs.existsSync(gen)) item.poster = gen; else queueCover(item);
+        }
+        next.push(item);
+      }
+    }
+    next.sort((a, b) => b.mtime - a.mtime);
+    library = next;
+    saveLibrary();
+    notifyLibrary();
+  } finally {
+    scanning = false;
+  }
+}
+
 /* ---------------- 托盘（规范 §4 TrayMenu；bgCasting 待机模式宿主） ---------------- */
 
 let tray = null;
@@ -524,6 +685,8 @@ ipcMain.handle('settings:get', () => settings);
 ipcMain.handle('settings:set', (_e, patch) => {
   const dlnaKeys = ['dlnaEnabled', 'dlnaFriendlyName'];
   const needDlnaRestart = dlnaKeys.some((k) => k in patch && patch[k] !== settings[k]);
+  const foldersChanged = 'libraryFolders' in patch
+    && JSON.stringify(patch.libraryFolders) !== JSON.stringify(settings.libraryFolders);
   settings = { ...settings, ...patch };
   writeSettings();
   if ('hdrMode' in patch || 'hdrAlgo' in patch) {
@@ -534,7 +697,24 @@ ipcMain.handle('settings:set', (_e, patch) => {
     if (dlnaProc) { dlnaProc.kill(); dlnaProc = null; }
     startDlna();
   }
+  if (foldersChanged) scanLibrary();
   return settings;
+});
+
+/* 媒体库 */
+ipcMain.handle('library:list', () => library);
+ipcMain.handle('library:rescan', () => { scanLibrary(); return true; });
+ipcMain.handle('library:add-folder', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(homeWin, {
+    title: '添加媒体库文件夹', properties: ['openDirectory'],
+  });
+  if (canceled || !filePaths[0]) return settings.libraryFolders;
+  if (!settings.libraryFolders.includes(filePaths[0])) {
+    settings.libraryFolders = [...settings.libraryFolders, filePaths[0]];
+    writeSettings();
+    scanLibrary();
+  }
+  return settings.libraryFolders;
 });
 ipcMain.handle('hdr:override', async (_e, o) => {
   hdrOverride = { mode: o?.mode || 'auto', algo: o?.algo || null };
@@ -664,6 +844,7 @@ app.whenReady().then(() => {
   buildMenu();
   createTray();
   startDlna();
+  if ((settings.libraryFolders || []).length) scanLibrary();
   // 命令行带视频文件路径时直接播放（文件关联/拖放 exe 的基础）
   const fileArg = process.argv.slice(2).find((a) => fs.existsSync(a) && fs.statSync(a).isFile());
   if (fileArg) startPlayback(path.resolve(fileArg));

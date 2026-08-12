@@ -51,6 +51,19 @@ export interface Settings {
   dlnaEnabled: boolean;
   dlnaFriendlyName: string;
   bgCasting: boolean;
+  libraryFolders: string[];
+}
+
+export interface LibraryItem {
+  path: string;
+  name: string;
+  title: string;
+  year: number | null;
+  season: number | null;
+  episode: number | null;
+  size: number;
+  mtime: number;
+  poster: string | null;
 }
 
 export interface Track {
@@ -106,6 +119,11 @@ export interface AuroraBridge {
   /** 设置读取/部分更新(返回合并后完整设置) */
   getSettings: () => Promise<Settings>;
   setSettings: (patch: Partial<Settings>) => Promise<Settings>;
+  /** 媒体库 */
+  getLibrary: () => Promise<LibraryItem[]>;
+  rescanLibrary: () => Promise<boolean>;
+  addLibraryFolder: () => Promise<string[]>;
+  onLibraryUpdated: (cb: (items: LibraryItem[]) => void) => () => void;
   /** 播放状态推送(播放会话期间 ~2Hz) */
   onStatus: (cb: (s: PlayerStatus) => void) => () => void;
   /** 元数据推送(file-loaded 时:轨道/章节) */

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { DlnaState, RecentItem } from '../bridge.d';
+import type { DlnaState, LibraryItem, RecentItem } from '../bridge.d';
 
 function toggleTheme() {
   const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
@@ -17,12 +17,15 @@ function fmtRemain(it: RecentItem): string {
 export default function Home() {
   const [recent, setRecent] = useState<RecentItem[]>([]);
   const [dlna, setDlna] = useState<DlnaState | null>(null);
+  const [library, setLibrary] = useState<LibraryItem[]>([]);
   const [urlModal, setUrlModal] = useState(false);
   const [url, setUrl] = useState('');
 
   useEffect(() => {
     window.aurora.getRecent().then(setRecent);
     window.aurora.getDlnaState().then(setDlna);
+    window.aurora.getLibrary().then(setLibrary);
+    return window.aurora.onLibraryUpdated(setLibrary);
   }, []);
 
   const head = recent[0];
@@ -135,6 +138,40 @@ export default function Home() {
                   </div>
                   <div className="name">{it.name}</div>
                   <div className="info timecode">{fmtRemain(it) || new Date(it.at).toLocaleDateString()}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* 媒体库海报墙 */}
+        <section>
+          <div className="section-head">
+            <h2>媒体库</h2>
+            <span>{library.length} 个项目</span>
+          </div>
+          {library.length === 0 ? (
+            <div className="empty-hint">
+              还没有媒体库内容 —
+              <button className="link-btn" onClick={() => window.aurora.addLibraryFolder()}>添加文件夹</button>
+            </div>
+          ) : (
+            <div className="rail">
+              {library.map((it, i) => (
+                <button key={it.path} className="poster" onClick={() => window.aurora.openPath(it.path)}>
+                  <div className="cover" style={it.poster ? {
+                    backgroundImage: `url("file:///${it.poster.replace(/\\/g, '/')}")`,
+                    backgroundSize: 'cover', backgroundPosition: 'center',
+                  } : {
+                    background: `linear-gradient(170deg, hsl(${200 + i * 24}, 14%, var(--cv-hi)) 0%, hsl(${200 + i * 24}, 16%, var(--cv-lo)) 75%)`,
+                  }}>
+                    {!it.poster && <span className="ext">{it.name.split('.').pop()?.toUpperCase()}</span>}
+                    {it.episode != null && (
+                      <span className="ep-tag">{it.season != null ? `S${String(it.season).padStart(2, '0')}E${String(it.episode).padStart(2, '0')}` : `E${String(it.episode).padStart(2, '0')}`}</span>
+                    )}
+                  </div>
+                  <div className="name">{it.title}</div>
+                  <div className="info timecode">{[it.year, it.episode != null ? '剧集' : null].filter(Boolean).join(' · ')}</div>
                 </button>
               ))}
             </div>

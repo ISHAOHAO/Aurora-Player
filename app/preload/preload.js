@@ -15,6 +15,14 @@ contextBridge.exposeInMainWorld('aurora', {
   getDlnaState: () => ipcRenderer.invoke('dlna:state'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
+  getLibrary: () => ipcRenderer.invoke('library:list'),
+  rescanLibrary: () => ipcRenderer.invoke('library:rescan'),
+  addLibraryFolder: () => ipcRenderer.invoke('library:add-folder'),
+  onLibraryUpdated: (cb) => {
+    const listener = (_e, items) => cb(items);
+    ipcRenderer.on('library:updated', listener);
+    return () => ipcRenderer.removeListener('library:updated', listener);
+  },
   toggleFullscreen: () => ipcRenderer.invoke('app:toggle-fullscreen'),
   setHdrOverride: (o) => ipcRenderer.invoke('hdr:override', o),
   addSubtitle: () => ipcRenderer.invoke('sub:add'),
