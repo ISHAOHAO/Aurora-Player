@@ -17,6 +17,10 @@ contextBridge.exposeInMainWorld('aurora', {
   setHdrOverride: (o) => ipcRenderer.invoke('hdr:override', o),
   dragStart: () => ipcRenderer.send('win:drag-start'),
   dragEnd: () => ipcRenderer.send('win:drag-end'),
+  resizeStart: (dir) => ipcRenderer.send('win:resize-start', dir),
+  resizeEnd: () => ipcRenderer.send('win:resize-end'),
+  minimizeWindow: () => ipcRenderer.send('win:minimize'),
+  toggleMaximize: () => ipcRenderer.send('win:maximize-toggle'),
 
   onStatus: (cb) => {
     const listener = (_e, status) => cb(status);

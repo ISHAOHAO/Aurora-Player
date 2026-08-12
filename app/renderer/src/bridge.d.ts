@@ -86,6 +86,11 @@ export interface AuroraBridge {
   /** 手动窗口拖拽（透明窗 app-region 失效的替代方案） */
   dragStart: () => void;
   dragEnd: () => void;
+  /** 手动边缘缩放：dir ∈ n/s/e/w/ne/nw/se/sw */
+  resizeStart: (dir: string) => void;
+  resizeEnd: () => void;
+  minimizeWindow: () => void;
+  toggleMaximize: () => void;
 }
 
 declare global {

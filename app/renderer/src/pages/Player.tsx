@@ -321,13 +321,19 @@ export default function Player() {
 
   /* ----- 手动拖拽窗口（透明窗 app-region 失效的替代） ----- */
   useEffect(() => {
-    const up = () => window.aurora.dragEnd();
+    const up = () => { window.aurora.dragEnd(); window.aurora.resizeEnd(); };
     window.addEventListener('mouseup', up);
     return () => window.removeEventListener('mouseup', up);
   }, []);
   const onDragMouseDown = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button')) return;
     window.aurora.dragStart();
+  };
+  const RESIZE_DIRS = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+  const onResizeMouseDown = (dir: string) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    window.aurora.resizeStart(dir);
   };
 
   return (
@@ -344,6 +350,11 @@ export default function Player() {
         onDoubleClick={(e) => { e.stopPropagation(); window.aurora.toggleFullscreen(); }}
       />
 
+      {/* 8 向边缘缩放热区 */}
+      {RESIZE_DIRS.map((d) => (
+        <div key={d} className={`rz rz-${d}`} onMouseDown={onResizeMouseDown(d)} />
+      ))}
+
       {/* 顶部信息条 */}
       <div className="top-info" onMouseDown={onDragMouseDown} onClick={(e) => e.stopPropagation()}>
         {status?.casting && (
@@ -359,6 +370,12 @@ export default function Player() {
           </span>
         )}
         <div className="spacer" />
+        <button className="icon-btn" title="最小化" onClick={(e) => { e.stopPropagation(); window.aurora.minimizeWindow(); }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M5 12h14"/></svg>
+        </button>
+        <button className="icon-btn" title="最大化/还原" onClick={(e) => { e.stopPropagation(); window.aurora.toggleMaximize(); }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+        </button>
         <button className="icon-btn" title="关闭并返回首页" onClick={(e) => { e.stopPropagation(); window.aurora.stop(); }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6L6 18M6 6l12 12"/></svg>
         </button>

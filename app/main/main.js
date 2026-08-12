@@ -388,6 +388,34 @@ ipcMain.on('win:drag-start', () => {
 });
 ipcMain.on('win:drag-end', () => clearInterval(dragTimer));
 
+/* 手动边缘缩放：透明窗无原生边框，8 向热区 → 主进程按方向改 bounds（16ms 节流，最小 640×400） */
+let resizeTimer = null;
+ipcMain.on('win:resize-start', (_e, dir) => {
+  if (!videoWin || videoWin.isDestroyed() || videoWin.isFullScreen() || videoWin.isMaximized()) return;
+  const startCursor = screen.getCursorScreenPoint();
+  const b = videoWin.getBounds();
+  clearInterval(resizeTimer);
+  resizeTimer = setInterval(() => {
+    if (!videoWin || videoWin.isDestroyed()) return clearInterval(resizeTimer);
+    const cur = screen.getCursorScreenPoint();
+    const dx = cur.x - startCursor.x, dy = cur.y - startCursor.y;
+    let { x, y, width, height } = b;
+    if (dir.includes('e')) width = b.width + dx;
+    if (dir.includes('s')) height = b.height + dy;
+    if (dir.includes('w')) { width = b.width - dx; x = b.x + dx; }
+    if (dir.includes('n')) { height = b.height - dy; y = b.y + dy; }
+    if (width < 640) { if (dir.includes('w')) x += width - 640; width = 640; }
+    if (height < 400) { if (dir.includes('n')) y += height - 400; height = 400; }
+    videoWin.setBounds({ x, y, width, height });
+  }, 16);
+});
+ipcMain.on('win:resize-end', () => clearInterval(resizeTimer));
+ipcMain.on('win:minimize', () => { if (videoWin && !videoWin.isDestroyed()) videoWin.minimize(); });
+ipcMain.on('win:maximize-toggle', () => {
+  if (!videoWin || videoWin.isDestroyed()) return;
+  if (videoWin.isMaximized()) videoWin.unmaximize(); else videoWin.maximize();
+});
+
 /* ---------------- 首页窗口 + 菜单 ---------------- */
 
 function createHomeWindow() {

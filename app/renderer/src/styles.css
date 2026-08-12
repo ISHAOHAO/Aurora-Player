@@ -315,6 +315,16 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
 .drag-strip {
   position: absolute; top: 0; left: 0; right: 0; height: 14px; z-index: 30;
 }
+/* 8 向边缘缩放热区（透明窗无原生边框；DWM 隐形边框会吃掉外侧 ~7px，热区内扩至 10px） */
+.rz { position: absolute; z-index: 40; }
+.rz-n { top: 0; left: 16px; right: 16px; height: 10px; cursor: ns-resize; }
+.rz-s { bottom: 0; left: 16px; right: 16px; height: 10px; cursor: ns-resize; }
+.rz-e { right: 0; top: 16px; bottom: 16px; width: 10px; cursor: ew-resize; }
+.rz-w { left: 0; top: 16px; bottom: 16px; width: 10px; cursor: ew-resize; }
+.rz-ne { top: 0; right: 0; width: 16px; height: 16px; cursor: nesw-resize; }
+.rz-nw { top: 0; left: 0; width: 16px; height: 16px; cursor: nwse-resize; }
+.rz-se { bottom: 0; right: 0; width: 16px; height: 16px; cursor: nwse-resize; }
+.rz-sw { bottom: 0; left: 0; width: 16px; height: 16px; cursor: nesw-resize; }
 
 /* 顶部信息条 */
 .top-info {
