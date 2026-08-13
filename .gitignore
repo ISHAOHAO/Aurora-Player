@@ -12,4 +12,5 @@ app/scripts/shot*.png
 # 工具本地目录（skills CLI 安装物，skills-lock.json 保留）
 .agents/
 .claude/
+.workbuddy/
 agent/
