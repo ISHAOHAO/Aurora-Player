@@ -123,6 +123,9 @@ export interface AuroraBridge {
   getLibrary: () => Promise<LibraryItem[]>;
   rescanLibrary: () => Promise<boolean>;
   addLibraryFolder: () => Promise<string[]>;
+  /** NAS/SMB：添加 UNC 共享(自动入库扫描); needAuth 时可调 openNasExplorer 登录 */
+  addNasShare: (input: string) => Promise<{ ok: boolean; error?: string; unc?: string; needAuth?: boolean }>;
+  openNasExplorer: (unc: string) => Promise<void>;
   onLibraryUpdated: (cb: (items: LibraryItem[]) => void) => () => void;
   /** 播放状态推送(播放会话期间 ~2Hz) */
   onStatus: (cb: (s: PlayerStatus) => void) => () => void;

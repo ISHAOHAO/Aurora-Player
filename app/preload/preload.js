@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('aurora', {
   getLibrary: () => ipcRenderer.invoke('library:list'),
   rescanLibrary: () => ipcRenderer.invoke('library:rescan'),
   addLibraryFolder: () => ipcRenderer.invoke('library:add-folder'),
+  addNasShare: (input) => ipcRenderer.invoke('nas:add', input),
+  openNasExplorer: (unc) => ipcRenderer.invoke('nas:open-explorer', unc),
   onLibraryUpdated: (cb) => {
     const listener = (_e, items) => cb(items);
     ipcRenderer.on('library:updated', listener);

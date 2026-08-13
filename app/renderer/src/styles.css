@@ -573,3 +573,6 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
 .url-modal .ops button:hover { background: var(--surface-hover); color: var(--text-primary); }
 .url-modal .ops button.primary { background: var(--btn-primary-bg); color: var(--btn-primary-fg); }
 .url-modal .ops button.primary:hover { opacity: .85; }
+.nas-msg { font-size: 12px; color: var(--text-muted); line-height: 1.6; margin-top: 10px; }
+.nas-msg.ok { color: var(--accent); }
+.nas-msg .link-btn { margin-left: 8px; }

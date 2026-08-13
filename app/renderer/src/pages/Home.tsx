@@ -20,6 +20,9 @@ export default function Home() {
   const [library, setLibrary] = useState<LibraryItem[]>([]);
   const [urlModal, setUrlModal] = useState(false);
   const [url, setUrl] = useState('');
+  const [nasModal, setNasModal] = useState(false);
+  const [nasInput, setNasInput] = useState('');
+  const [nasMsg, setNasMsg] = useState<{ text: string; unc?: string; needAuth?: boolean; ok?: boolean } | null>(null);
 
   useEffect(() => {
     window.aurora.getRecent().then(setRecent);
@@ -36,6 +39,18 @@ export default function Home() {
     setUrlModal(false);
     setUrl('');
     window.aurora.openPath(u);
+  };
+  const addNas = async () => {
+    const input = nasInput.trim();
+    if (!input) return;
+    setNasMsg({ text: '正在连接…' });
+    const r = await window.aurora.addNasShare(input);
+    if (r.ok) {
+      setNasMsg({ text: `已加入媒体库：${r.unc}，正在扫描…`, ok: true });
+      setTimeout(() => { setNasModal(false); setNasMsg(null); setNasInput(''); }, 1200);
+    } else {
+      setNasMsg({ text: r.error || '连接失败', unc: r.unc, needAuth: r.needAuth });
+    }
   };
 
   return (
@@ -110,9 +125,9 @@ export default function Home() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M5 12.55a11 11 0 0 1 14.08 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>
             <div>DLNA 投屏<small>{dlna?.running ? '等待手机投放' : '启动中…'}</small></div>
           </button>
-          <button className="tile" disabled>
+          <button className="tile" onClick={() => setNasModal(true)}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="3" width="20" height="6" rx="2"/><rect x="2" y="11" width="20" height="6" rx="2"/><path d="M6 6h.01M6 14h.01M16 18l3 3m0-3l-3 3"/></svg>
-            <div>NAS<small>SMB / WebDAV（P1）</small></div>
+            <div>NAS<small>SMB / 网络共享文件夹</small></div>
           </button>
         </section>
 
@@ -194,6 +209,33 @@ export default function Home() {
             <div className="ops">
               <button onClick={() => setUrlModal(false)}>取消</button>
               <button className="primary" onClick={playUrl}>播放</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* NAS/SMB 弹窗 */}
+      {nasModal && (
+        <div className="url-modal-mask" onClick={() => { setNasModal(false); setNasMsg(null); }}>
+          <div className="url-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>添加 NAS / SMB 共享</h3>
+            <input
+              autoFocus
+              placeholder="\\服务器\共享（如 \\NAS\movies）"
+              value={nasInput}
+              onChange={(e) => { setNasInput(e.target.value); setNasMsg(null); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') addNas(); if (e.key === 'Escape') setNasModal(false); }}
+            />
+            {nasMsg && (
+              <div className={`nas-msg${nasMsg.ok ? ' ok' : ''}`}>
+                {nasMsg.text}
+                {nasMsg.needAuth && nasMsg.unc && (
+                  <button className="link-btn" onClick={() => window.aurora.openNasExplorer(nasMsg.unc!)}>去登录</button>
+                )}
+              </div>
+            )}
+            <div className="ops">
+              <button onClick={() => { setNasModal(false); setNasMsg(null); }}>取消</button>
+              <button className="primary" onClick={addNas}>连接并添加</button>
             </div>
           </div>
         </div>

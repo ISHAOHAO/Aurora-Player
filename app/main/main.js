@@ -40,7 +40,7 @@ function readSettings() {
   try { return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE(), 'utf8')) }; }
   catch { return { ...DEFAULT_SETTINGS }; }
 }
-let settings = readSettings();
+let settings = { ...DEFAULT_SETTINGS };   // 磁盘读取延迟到 whenReady（app.getPath 需 ready 后才可靠）
 function writeSettings() {
   try { fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(settings, null, 2)); } catch {}
 }
@@ -716,6 +716,41 @@ ipcMain.handle('library:add-folder', async () => {
   }
   return settings.libraryFolders;
 });
+
+/* NAS/SMB：UNC 路径规范化 + 连接测试 + 入库（Windows 上 SMB = UNC，无需 smb 库） */
+function normalizeUnc(input) {
+  const s = String(input || '').trim().replace(/\//g, '\\').replace(/^\\+/, '');
+  const parts = s.split('\\').filter(Boolean);
+  if (parts.length < 2) return null;   // 至少需要 \\服务器\共享
+  return '\\\\' + parts.join('\\');
+}
+
+ipcMain.handle('nas:add', async (_e, input) => {
+  const unc = normalizeUnc(input);
+  if (!unc) return { ok: false, error: '格式应为 \\\\服务器\\共享（如 \\\\NAS\\movies）' };
+  try {
+    fs.readdirSync(unc);
+  } catch (err) {
+    const needAuth = err.code === 'EACCES' || err.code === 'EPERM';
+    const msg = needAuth
+      ? '需要登录凭据：点"去登录"在资源管理器中输入账号密码后重试'
+      : (err.code === 'ENOENT' || err.code === 'ENOTFOUND')
+        ? '找不到该路径，检查服务器地址与共享名'
+        : `连接失败：${err.code || err.message}`;
+    return { ok: false, error: msg, unc, needAuth };
+  }
+  if (!settings.libraryFolders.includes(unc)) {
+    settings.libraryFolders = [...settings.libraryFolders, unc];
+    writeSettings();
+  }
+  scanLibrary();
+  return { ok: true, unc };
+});
+
+ipcMain.handle('nas:open-explorer', (_e, unc) => {
+  const { shell } = require('electron');
+  shell.openPath(unc);   // 触发 Windows 凭据登录框
+});
 ipcMain.handle('hdr:override', async (_e, o) => {
   hdrOverride = { mode: o?.mode || 'auto', algo: o?.algo || null };
   await refreshMetadata();   // 重跑决策链并推送新 meta
@@ -840,6 +875,7 @@ app.whenReady().then(() => {
     app.quit();
     return;
   }
+  settings = readSettings();   // app.getPath 需 ready 后可靠，磁盘读取在此进行
   hdrOverride = { mode: settings.hdrMode, algo: settings.hdrAlgo };
   buildMenu();
   createTray();
