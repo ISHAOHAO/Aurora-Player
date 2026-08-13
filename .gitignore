@@ -9,8 +9,9 @@ runtime/
 *.log
 app/scripts/shot*.png
 
-# 工具本地目录（skills CLI 安装物，skills-lock.json 保留）
+# 工具本地目录
 .agents/
 .claude/
 .workbuddy/
 agent/
+skills-lock.json
