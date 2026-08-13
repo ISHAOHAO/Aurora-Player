@@ -1,6 +1,6 @@
 # Aurora Player
 
-> Win11 沉浸式视频播放器 —— 本地 / 网络 / DLNA 全能播放，HDR 画质决策链，媒体中心。
+> Win10/Win11 沉浸式视频播放器 —— 本地 / 网络 / DLNA 全能播放，HDR 画质决策链，媒体中心。
 
 Aurora Player 是一款面向 Windows 11 的桌面视频播放器，以「电影镜头、粒子视觉与舞台」为设计语言，在 mpv 解码内核之上构建了完整的沉浸式体验：自绘控制层、HDR 画质决策、DLNA 投屏（MediaRenderer）、本地媒体库海报墙与 NAS/SMB 在线浏览。
 
@@ -21,13 +21,13 @@ Aurora Player 是一款面向 Windows 11 的桌面视频播放器，以「电影
 
 ## 🧱 技术栈
 
-| 层 | 选型 |
-| --- | --- |
-| 应用壳 | Electron 43 |
-| 渲染层 | React 19 + TypeScript（strict）+ Vite 8 |
-| 播放引擎 | mpv 0.41（子进程 `--wid` 嵌入，命名管道 JSON IPC） |
+| 层       | 选型                                                          |
+| ------- | ----------------------------------------------------------- |
+| 应用壳     | Electron 43                                                 |
+| 渲染层     | React 19 + TypeScript（strict）+ Vite 8                       |
+| 播放引擎    | mpv 0.41（子进程 `--wid` 嵌入，命名管道 JSON IPC）                      |
 | DLNA 服务 | 零依赖自研协议栈（SSDP / SOAP / GENA），Electron `utilityProcess` 独立进程 |
-| 媒体库 | JSON 持久化 + mpv `--vo=image` 抽帧（本地刮削，无 SQLite 依赖） |
+| 媒体库     | JSON 持久化 + mpv `--vo=image` 抽帧（本地刮削，无 SQLite 依赖）            |
 
 ## 🏗️ 架构概览
 
@@ -82,12 +82,12 @@ Aurora Player 是一款面向 Windows 11 的桌面视频播放器，以「电影
 
 ### 1. 环境要求
 
-| 依赖 | 版本 | 说明 |
-| --- | --- | --- |
-| Windows | 10 / 11（目标 Win11） | 目前仅支持 Windows |
-| Node.js | ≥ 22 | 推荐使用 LTS |
-| npm | 随 Node 附带 | |
-| mpv 运行时 | 0.41.x | 见下一步，需手动下载 |
+| 依赖      | 版本                | 说明            |
+| ------- | ----------------- | ------------- |
+| Windows | 10 / 11（目标 Win10/Win11） | 目前仅支持 Windows |
+| Node.js | ≥ 22              | 推荐使用 LTS      |
+| npm     | 随 Node 附带         |               |
+| mpv 运行时 | 0.41.x            | 见下一步，需手动下载    |
 
 ### 2. 克隆仓库
 
@@ -166,15 +166,15 @@ npm start -- "D:\Movies\sample.mkv"
 
 ### 快捷键与鼠标操作
 
-| 操作 | 方式 |
-| --- | --- |
-| 播放 / 暂停 | `空格` 或单击画面 |
-| 全屏 | `F` 或双击画面 |
-| 快进 / 快退 | `←` / `→` |
-| 音量 | 滚轮（`Shift + 滚轮` 为 Seek） |
-| 静音 | `M` |
-| 打开文件 | `Ctrl + O` |
-| 右键菜单 | 载入字幕、音轨 / 字幕轨切换等 |
+| 操作      | 方式                      |
+| ------- | ----------------------- |
+| 播放 / 暂停 | `空格` 或单击画面              |
+| 全屏      | `F` 或双击画面               |
+| 快进 / 快退 | `←` / `→`               |
+| 音量      | 滚轮（`Shift + 滚轮` 为 Seek） |
+| 静音      | `M`                     |
+| 打开文件    | `Ctrl + O`              |
+| 右键菜单    | 载入字幕、音轨 / 字幕轨切换等        |
 
 > 播放中控制层 3 秒无操作自动隐藏，鼠标移至底部重新唤出；暂停时控制层常驻。
 
@@ -209,23 +209,23 @@ npm run dev    # 构建渲染层 + 启动 Electron
 
 调试环境变量（主进程 `main.js` 支持）：
 
-| 环境变量 | 说明 |
-| --- | --- |
-| `AURORA_VO=direct3d` | 强制指定 mpv 视频输出驱动 |
-| `AURORA_HWDEC=no` | 关闭硬件解码（定位解码问题时） |
-| `AURORA_MPV_EXTRA='["--x","y"]'` | 追加任意 mpv 启动参数 |
+| 环境变量                             | 说明              |
+| -------------------------------- | --------------- |
+| `AURORA_VO=direct3d`             | 强制指定 mpv 视频输出驱动 |
+| `AURORA_HWDEC=no`                | 关闭硬件解码（定位解码问题时） |
+| `AURORA_MPV_EXTRA='["--x","y"]'` | 追加任意 mpv 启动参数   |
 
 ### 运行测试
 
 测试脚本位于 `app/scripts/`：
 
-| 脚本 | 说明 |
-| --- | --- |
-| `node scripts/hdr-test.js` | HDR 决策链单元测试 |
-| `node scripts/hdr-e2e.js` | HDR 端到端验证（lavfi 生成测试片） |
-| `node scripts/dmc-test.js` | DLNA 虚拟 DMC 验收（需先 `npm start`） |
-| `node scripts/pipe-test.js` | mpv 命名管道 IPC 验证 |
-| `scripts/*.ps1` | 窗口 / 拖拽 / 缩放 / 截图等自动化探针 |
+| 脚本                          | 说明                             |
+| --------------------------- | ------------------------------ |
+| `node scripts/hdr-test.js`  | HDR 决策链单元测试                    |
+| `node scripts/hdr-e2e.js`   | HDR 端到端验证（lavfi 生成测试片）         |
+| `node scripts/dmc-test.js`  | DLNA 虚拟 DMC 验收（需先 `npm start`） |
+| `node scripts/pipe-test.js` | mpv 命名管道 IPC 验证                |
+| `scripts/*.ps1`             | 窗口 / 拖拽 / 缩放 / 截图等自动化探针        |
 
 ### 提交前检查
 
@@ -242,13 +242,13 @@ node scripts/hdr-test.js   # 决策链单测通过
 
 设计规格与实现记录均位于 `docs/`：
 
-| 文档 | 内容 |
-| --- | --- |
-| [01-UI-UX设计规范.md](docs/01-UI-UX设计规范.md) | 设计令牌、Glass 材质、页面规范、组件、动效、错误态 |
-| [02-音视频引擎技术设计.md](docs/02-音视频引擎技术设计.md) | 引擎架构、解码降级链、HDR/色彩、音频、字幕、状态机 |
+| 文档                                              | 内容                                |
+| ----------------------------------------------- | --------------------------------- |
+| [01-UI-UX设计规范.md](docs/01-UI-UX设计规范.md)         | 设计令牌、Glass 材质、页面规范、组件、动效、错误态      |
+| [02-音视频引擎技术设计.md](docs/02-音视频引擎技术设计.md)         | 引擎架构、解码降级链、HDR/色彩、音频、字幕、状态机       |
 | [03-DLNA-UPnP技术规格.md](docs/03-DLNA-UPnP技术规格.md) | SSDP、SOAP 三服务、GENA、HTTP 拉流、真机兼容策略 |
-| [04-测试与兼容性矩阵.md](docs/04-测试与兼容性矩阵.md) | 素材规范、用例模板、GPU/显示器/DLNA 矩阵、验收门槛 |
-| [05-实现偏差清单.md](docs/05-实现偏差清单.md) | 规格 vs 实现偏差、架构决策、排障记录 |
+| [04-测试与兼容性矩阵.md](docs/04-测试与兼容性矩阵.md)           | 素材规范、用例模板、GPU/显示器/DLNA 矩阵、验收门槛    |
+| [05-实现偏差清单.md](docs/05-实现偏差清单.md)               | 规格 vs 实现偏差、架构决策、排障记录              |
 
 ---
 
@@ -291,11 +291,15 @@ fix: 全屏按钮只能进不能出 — 透明窗 isFullScreen() 不可靠,改�
 
 ---
 
-## ⚖️ 许可证说明
+## ⚖️ 许可证
 
-- 本项目自身暂未选择开源许可证（TBD）。
-- 内置播放内核 **mpv 采用 GPL 许可**（本项目以独立子进程方式集成，与 UI 进程隔离），分发时须遵守其许可条款并附声明。
-- 更多许可相关决策见 `docs/05-实现偏差清单.md` 与开发记录。
+本项目自身代码采用 **GNU General Public License v3.0 (GPL-3.0-or-later)** 开源，详见根目录 [`LICENSE`](LICENSE)。
+
+- **版权声明**：Copyright (C) 2026 Howie Meng. 本程序为自由软件，可依据 GPL-3.0 条款重新分发或修改；分发时无任何担保。详见许可证全文。
+- **mpv 内核**：内置播放内核 [mpv](https://mpv.io) 采用 **GPL-2.0-or-later** 许可（本项目以独立子进程方式集成，与 UI 进程通过命名管道 IPC 通信，进程间隔离）。分发时须同时遵守 mpv 的许可条款并附其声明，mpv 源码获取方式见 [mpv.io/installation](https://mpv.io/installation/)。
+- **兼容性说明**：GPL-3.0 与 mpv 的 GPL-2.0-or-later 兼容（后者允许升级到更高版本），二者并存不产生许可冲突。
+- **第三方依赖**：Electron、React 等依赖分别遵循各自许可（MIT 等），以 `node_modules` 内各包的 LICENSE 为准。
+- 更多许可相关决策记录见 `docs/05-实现偏差清单.md`。
 
 ---
 

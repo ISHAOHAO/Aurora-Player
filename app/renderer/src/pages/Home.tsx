@@ -2,6 +2,21 @@ import { useEffect, useState } from 'react';
 import type { DlnaState, LibraryItem, NasEntry, RecentItem } from '../bridge.d';
 import { WindowControls, ResizeZones, dragHandler, useWindowDragRelease } from '../components/WindowChrome';
 
+/** 媒体库筛选（D27）：电影=无剧集号，剧集=有 episode；动漫/纪录片需刮削元数据，暂并入 */
+type LibFilter = 'all' | 'movie' | 'tv';
+
+function matchFilter(it: LibraryItem, f: LibFilter): boolean {
+  if (f === 'all') return true;
+  return f === 'movie' ? it.episode == null : it.episode != null;
+}
+
+/** 悬停规格标签（D27）：分辨率/HDR/ASS，纯文本 · 分隔（规范 v1.1：禁胶囊） */
+function specLabel(it: LibraryItem): string {
+  const s = it.specs;
+  if (!s) return '';
+  return [s.res, s.hdr, s.sub].filter(Boolean).join(' · ');
+}
+
 function toggleTheme() {
   const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
   document.documentElement.dataset.theme = next;
@@ -26,6 +41,7 @@ export default function Home() {
   const [nasPath, setNasPath] = useState('');   // 当前浏览目录，'' = 地址输入模式
   const [nasEntries, setNasEntries] = useState<NasEntry[] | null>(null);
   const [nasMsg, setNasMsg] = useState<{ text: string; unc?: string; needAuth?: boolean; ok?: boolean } | null>(null);
+  const [libFilter, setLibFilter] = useState<LibFilter>('all');
 
   useWindowDragRelease();
 
@@ -182,6 +198,11 @@ export default function Home() {
           <div className="section-head">
             <h2>媒体库</h2>
             <span>{library.length} 个项目</span>
+            <div className="filter-bar">
+              {([['all', '全部'], ['movie', '电影'], ['tv', '剧集']] as [LibFilter, string][]).map(([v, l]) => (
+                <button key={v} className={libFilter === v ? 'on' : ''} onClick={() => setLibFilter(v)}>{l}</button>
+              ))}
+            </div>
           </div>
           {library.length === 0 ? (
             <div className="empty-hint">
@@ -190,7 +211,7 @@ export default function Home() {
             </div>
           ) : (
             <div className="rail">
-              {library.map((it, i) => (
+              {library.filter((it) => matchFilter(it, libFilter)).map((it, i) => (
                 <button key={it.path} className="poster" onClick={() => window.aurora.openPath(it.path)}>
                   <div className="cover" style={it.poster ? {
                     backgroundImage: `url("file:///${it.poster.replace(/\\/g, '/')}")`,
@@ -202,6 +223,7 @@ export default function Home() {
                     {it.episode != null && (
                       <span className="ep-tag">{it.season != null ? `S${String(it.season).padStart(2, '0')}E${String(it.episode).padStart(2, '0')}` : `E${String(it.episode).padStart(2, '0')}`}</span>
                     )}
+                    <span className="spec-hover">{specLabel(it)}</span>
                   </div>
                   <div className="name">{it.title}</div>
                   <div className="info timecode">{[it.year, it.episode != null ? '剧集' : null].filter(Boolean).join(' · ')}</div>

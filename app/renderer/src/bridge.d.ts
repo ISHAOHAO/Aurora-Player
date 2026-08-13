@@ -66,6 +66,12 @@ export interface Settings {
   hdrPeakPercentile: number;
 }
 
+export interface LibrarySpecs {
+  res: '4K' | '1080p' | '720p' | null;
+  hdr: 'HDR10' | 'HDR10+' | 'Dolby Vision' | 'HLG' | null;
+  sub: 'ASS' | null;
+}
+
 export interface LibraryItem {
   path: string;
   name: string;
@@ -76,6 +82,7 @@ export interface LibraryItem {
   size: number;
   mtime: number;
   poster: string | null;
+  specs?: LibrarySpecs;
 }
 
 export interface Track {
@@ -111,6 +118,13 @@ export interface PlayerMeta {
   tracks: Track[];
   chapters: Chapter[];
   hdr?: HdrInfo | null;
+}
+
+/** D25 播放失败错误（四段式：标题/原因/已尝试/操作） */
+export interface PlayError {
+  file: string;
+  reason: string;
+  attempted: string;
 }
 
 export interface AuroraBridge {
@@ -159,6 +173,14 @@ export interface AuroraBridge {
   addSubtitle: () => Promise<void>;
   /** 缩略图查询：时间(s) → 最近帧 file:// URL，未就绪返回 null */
   getThumb: (time: number) => Promise<string | null>;
+  /** 快照：导出原始视频帧 PNG，返回保存路径（D31，Ctrl+S） */
+  screenshot: () => Promise<string | null>;
+  /** 播放失败重试（software=true 时强制软件解码，D25） */
+  retryPlayback: (software?: boolean) => Promise<boolean>;
+  /** 导出 mpv 日志，返回保存路径（D25） */
+  exportLog: () => Promise<string | null>;
+  /** 播放失败推送（end-file reason=error，D25） */
+  onPlayError: (cb: (e: PlayError) => void) => () => void;
   /** 手动窗口拖拽（透明窗 app-region 失效的替代方案） */
   dragStart: () => void;
   dragEnd: () => void;

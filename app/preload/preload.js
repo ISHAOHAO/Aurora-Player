@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('aurora', {
   setHdrOverride: (o) => ipcRenderer.invoke('hdr:override', o),
   addSubtitle: () => ipcRenderer.invoke('sub:add'),
   getThumb: (time) => ipcRenderer.invoke('thumbs:nearest', time),
+  screenshot: () => ipcRenderer.invoke('app:screenshot'),
+  retryPlayback: (software) => ipcRenderer.invoke('app:retry', software),
+  exportLog: () => ipcRenderer.invoke('app:export-log'),
   dragStart: () => ipcRenderer.send('win:drag-start'),
   dragEnd: () => ipcRenderer.send('win:drag-end'),
   resizeStart: (dir) => ipcRenderer.send('win:resize-start', dir),
@@ -60,5 +63,11 @@ contextBridge.exposeInMainWorld('aurora', {
     const listener = (_e, text) => cb(text);
     ipcRenderer.on('cast:toast', listener);
     return () => ipcRenderer.removeListener('cast:toast', listener);
+  },
+
+  onPlayError: (cb) => {
+    const listener = (_e, err) => cb(err);
+    ipcRenderer.on('mpv:error', listener);
+    return () => ipcRenderer.removeListener('mpv:error', listener);
   },
 });

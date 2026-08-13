@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PlayerMeta, PlayerStatus, Track } from '../bridge.d';
+import type { PlayError, PlayerMeta, PlayerStatus, Track } from '../bridge.d';
 
 const IDLE_MS = 3000; // 规范 §3.2：静止 3 秒隐藏控制层
 
@@ -57,20 +57,31 @@ function ConsoleDrawer({ meta, status, onLocalMeta, onClose }: {
   const [subDelay, setSubDelay] = useState(0);
   const [audioDelay, setAudioDelay] = useState(0);
   const [subSize, setSubSize] = useState(34);
+  const [rotate, setRotate] = useState(0);
+  const [flip, setFlip] = useState({ h: false, v: false });
+  const [bilingual, setBilingual] = useState(false);
+  const [secondarySid, setSecondarySid] = useState<number | null>(null);
   const [tune, setTune] = useState({ targetPeak: 0, targetContrast: 0, saturation: 0, hdrPeakPercentile: 99.995 });
 
   useEffect(() => {
     (async () => {
-      const [sp, sd, ad, ss] = await Promise.all([
+      const [sp, sd, ad, ss, rot, vf] = await Promise.all([
         window.aurora.mpv('get_property', 'speed'),
         window.aurora.mpv('get_property', 'sub-delay'),
         window.aurora.mpv('get_property', 'audio-delay'),
         window.aurora.mpv('get_property', 'sub-font-size'),
+        window.aurora.mpv('get_property', 'video-rotate'),
+        window.aurora.mpv('get_property', 'vf'),
       ]);
       if (typeof sp === 'number') setSpeed(sp);
       if (typeof sd === 'number') setSubDelay(sd);
       if (typeof ad === 'number') setAudioDelay(ad);
       if (typeof ss === 'number') setSubSize(ss);
+      if (typeof rot === 'number') setRotate(rot);
+      if (Array.isArray(vf)) {
+        const names = vf.map((f: { name?: string }) => f?.name);
+        setFlip({ h: names.includes('hflip'), v: names.includes('vflip') });
+      }
     })();
     window.aurora.getSettings().then((s) => setTune({
       targetPeak: s.targetPeak ?? 0,
@@ -136,6 +147,28 @@ function ConsoleDrawer({ meta, status, onLocalMeta, onClose }: {
                 <button onClick={() => window.aurora.mpv('ab-loop-a')}>设置 A 点</button>
                 <button onClick={() => window.aurora.mpv('ab-loop-b')}>设置 B 点</button>
                 <button onClick={() => { window.aurora.mpv('ab-loop-clear'); }}>清除</button>
+              </div>
+            </div>
+            <div className="row">
+              <label>旋转<span className="val timecode">{rotate}°</span></label>
+              <div className="seg">
+                {[[0, '0°'], [90, '90°'], [180, '180°'], [270, '270°']].map(([v, l]) => (
+                  <button key={v} className={rotate === v ? 'on' : ''}
+                    onClick={() => { setRotate(v as number); set('video-rotate', v); }}>{l}</button>
+                ))}
+              </div>
+            </div>
+            <div className="row">
+              <label>翻转</label>
+              <div className="seg">
+                <button className={flip.h ? 'on' : ''}
+                  onClick={() => { const nx = !flip.h; setFlip((f) => ({ ...f, h: nx })); window.aurora.mpv('vf', nx ? 'add' : 'remove', 'hflip'); }}>
+                  水平翻转
+                </button>
+                <button className={flip.v ? 'on' : ''}
+                  onClick={() => { const nx = !flip.v; setFlip((f) => ({ ...f, v: nx })); window.aurora.mpv('vf', nx ? 'add' : 'remove', 'vflip'); }}>
+                  垂直翻转
+                </button>
               </div>
             </div>
           </>
@@ -212,6 +245,42 @@ function ConsoleDrawer({ meta, status, onLocalMeta, onClose }: {
                 {subTracks.length === 0 && <span className="val">无内嵌字幕</span>}
               </div>
             </div>
+            <div className="row">
+              <label>双语模式<small className="val">（主字幕底部 + 副字幕顶部，需两条字幕轨）</small></label>
+              <button className={`switch${bilingual ? ' on' : ''}`} disabled={subTracks.length < 2}
+                title={subTracks.length < 2 ? '至少需要两条字幕轨' : undefined}
+                onClick={() => {
+                  const on = !bilingual;
+                  setBilingual(on);
+                  if (on) {
+                    const primary = subTracks.find((t) => t.selected);
+                    const secondary = subTracks.find((t) => !t.selected);
+                    const psid = primary ? primary.id : subTracks[0].id;
+                    const ssid = secondary ? secondary.id : subTracks[0].id;
+                    setSecondarySid(ssid);
+                    set('sid', psid);
+                    set('secondary-sid', ssid);
+                    set('secondary-sub-pos', 10);
+                    set('secondary-sub-visibility', 'yes');
+                  } else {
+                    setSecondarySid(null);
+                    set('secondary-sid', 'no');
+                  }
+                }} />
+            </div>
+            {bilingual && (
+              <div className="row">
+                <label>副字幕（顶部）</label>
+                <div className="seg">
+                  {subTracks.map((t) => (
+                    <button key={t.id} className={secondarySid === t.id ? 'on' : ''}
+                      onClick={() => { setSecondarySid(t.id); set('secondary-sid', t.id); }}>
+                      {trackLabel(t)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="row">
               <label>外部字幕</label>
               <div className="seg">
@@ -298,12 +367,30 @@ export default function Player() {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [bubble, setBubble] = useState<{ x: number; t: number; ch: string | null; thumb: string | null } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [playErr, setPlayErr] = useState<PlayError | null>(null);
+  const [errDetail, setErrDetail] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => window.aurora.onStatus(setStatus), []);
   useEffect(() => window.aurora.onMeta(setMeta), []);
+  useEffect(() => window.aurora.onPlayError((e) => {
+    setPlayErr(e);
+    setErrDetail(false);
+    setIdle(false);
+  }), []);
+
+  const showToast = useCallback((text: string) => {
+    setToast(text);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  // 新的有效状态（file-loaded 后首个状态）→ 清除失败错误卡片
+  useEffect(() => {
+    if (status && !status.idle && status.title != null) setPlayErr(null);
+  }, [status]);
   useEffect(() => window.aurora.onCastToast((t) => {
     setToast(t);
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -322,7 +409,7 @@ export default function Player() {
 
   /* ----- 自动隐藏（播放中 3s 无操作；暂停/菜单/抽屉打开时常驻） ----- */
   const paused = status?.pause ?? true;
-  const pinned = paused || menu !== null || drawer || ctxMenu !== null;
+  const pinned = paused || menu !== null || drawer || ctxMenu !== null || playErr !== null;
 
   const wake = useCallback(() => {
     setIdle(false);
@@ -345,6 +432,15 @@ export default function Player() {
   /* ----- 键盘转发 ----- */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        // 快照（D31）：原始视频帧
+        e.preventDefault();
+        window.aurora.screenshot().then((p) => {
+          if (p) showToast(`已保存快照：${p}`);
+          else showToast('快照失败（无活动视频）');
+        });
+        return;
+      }
       switch (e.key) {
         case ' ': if (playLocked) return; e.preventDefault(); window.aurora.mpv('cycle', 'pause'); break;
         case 'ArrowRight': if (playLocked) return; window.aurora.mpv('seek', 5); break;
@@ -353,7 +449,7 @@ export default function Player() {
         case 'ArrowDown': if (volLocked) return; e.preventDefault(); window.aurora.mpv('add', 'volume', -5); break;
         case 'm': case 'M': if (volLocked) return; window.aurora.mpv('cycle', 'mute'); break;
         case 'f': case 'F': window.aurora.toggleFullscreen(); break;
-        case 'Escape': setMenu(null); setDrawer(false); setCtxMenu(null); break;
+        case 'Escape': setMenu(null); setDrawer(false); setCtxMenu(null); setPlayErr(null); break;
       }
     };
     window.addEventListener('keydown', onKey);
@@ -560,6 +656,7 @@ export default function Player() {
           <button className="mi" onClick={() => { window.aurora.mpv('cycle', 'pause'); setCtxMenu(null); }}>{paused ? '播放' : '暂停'}</button>
           <button className="mi" onClick={() => { window.aurora.toggleFullscreen(); setCtxMenu(null); }}>全屏</button>
           <div className="sep" />
+          <button className="mi" onClick={() => { window.aurora.screenshot().then((p) => { showToast(p ? `已保存快照：${p}` : '快照失败'); }); setCtxMenu(null); }}>保存快照 (Ctrl+S)</button>
           <button className="mi" onClick={() => { window.aurora.openFile(); setCtxMenu(null); }}>打开文件…</button>
           <button className="mi" onClick={() => { window.aurora.addSubtitle(); setCtxMenu(null); }}>载入外部字幕…</button>
           <button className="mi" onClick={() => { window.aurora.stop(); setCtxMenu(null); }}>停止并返回首页</button>
@@ -568,6 +665,33 @@ export default function Player() {
 
       {/* 投屏互抢 Toast（规格 §8） */}
       {toast && <div className="cast-toast glass-2">{toast}</div>}
+
+      {/* 播放失败错误卡片（规范 §6 四段式；D25） */}
+      {playErr && (
+        <div className="err-mask" onClick={(e) => e.stopPropagation()}>
+          <div className="err-card glass-3">
+            <div className="err-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 8v5M12 16.5h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+              无法播放该文件
+            </div>
+            <div className="err-row"><label>原因</label><span>{playErr.reason}</span></div>
+            <div className="err-row"><label>已尝试</label><span>{playErr.attempted}</span></div>
+            {playErr.file && <div className="err-row file"><label>文件</label><span title={playErr.file}>{playErr.file}</span></div>}
+            <div className="err-ops">
+              <button className="primary" onClick={() => { setPlayErr(null); window.aurora.retryPlayback(true); }}>切换软件解码</button>
+              <button onClick={() => setErrDetail(!errDetail)}>{errDetail ? '收起详情' : '查看详情'}</button>
+              <button onClick={() => { window.aurora.exportLog().then((p) => showToast(p ? `已导出日志：${p}` : '导出取消')); }}>导出日志</button>
+              <button onClick={() => { setPlayErr(null); window.aurora.retryPlayback(false); }}>重试</button>
+            </div>
+            {errDetail && (
+              <div className="err-detail">
+                <div className="err-row"><label>解码路径</label><span>当前：{playErr.attempted}</span></div>
+                <div className="err-row"><label>建议</label><span>尝试切换软件解码；若仍失败请导出日志并反馈。</span></div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

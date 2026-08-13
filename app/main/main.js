@@ -88,6 +88,8 @@ const pending = new Map();
 let statusTimer = null;
 let vrTimer = null;
 let hdrRetry = 0;
+let forceSoftwareDecode = false;   // D25 错误卡片「切换软件解码」
+let loadPending = false;           // D25：载入请求未确认（file-loaded 前为 true）
 
 /* ---------------- mpv 进程 ---------------- */
 
@@ -97,14 +99,16 @@ function spawnMpv(hwnd, file, seek) {
   //   AURORA_HWDEC=no      关闭硬解
   //   AURORA_MPV_EXTRA='["--x","y"]'  追加任意参数
   const extra = JSON.parse(process.env.AURORA_MPV_EXTRA || '[]');
+  const hwdec = forceSoftwareDecode ? 'no' : (process.env.AURORA_HWDEC || 'auto-safe');
   mpvProc = spawn(MPV_EXE, [
     `--wid=${hwnd}`,
     `--input-ipc-server=${PIPE_PATH}`,
+    '--idle=yes',              // 载入失败也保持进程存活（否则 pipe 随进程退出，end-file 事件丢失）
     '--keep-open=yes',
     '--no-terminal',
     '--osc=no',                // M2：自绘控制层，关掉 mpv OSC
     '--osd-level=1',
-    `--hwdec=${process.env.AURORA_HWDEC || 'auto-safe'}`,
+    `--hwdec=${hwdec}`,
     `--log-file=${path.join(app.getPath('userData'), 'mpv.log')}`,
     ...(process.env.AURORA_VO ? [`--vo=${process.env.AURORA_VO}`] : []),
     ...extra,
@@ -141,6 +145,7 @@ function connectPipe(retriesLeft) {
         pending.get(msg.request_id)(msg);
         pending.delete(msg.request_id);
       } else if (msg.event === 'file-loaded') {
+        loadPending = false;
         // 应用设置默认值（每新文件一次）
         mpvCommand('set_property', 'volume', settings.defaultVolume);
         mpvCommand('set_property', 'sub-font-size', settings.subFontSize);
@@ -149,6 +154,9 @@ function connectPipe(retriesLeft) {
         // 视频参数就绪/变化（解码器重初始化后 video-params 才可用）→ 重跑决策链（去抖）
         clearTimeout(vrTimer);
         vrTimer = setTimeout(refreshMetadata, 300);
+      } else if (msg.event === 'end-file' && msg.reason === 'error') {
+        // 播放失败（D25）：无法识别格式/解码初始化失败等 → 组装错误对象推给渲染层
+        pushPlaybackError();
       }
     }
   });
@@ -301,6 +309,44 @@ const pushMeta = (meta) => {
   if (homeWin && !homeWin.isDestroyed()) homeWin.webContents.send('mpv:meta', meta);
 };
 
+/* ---------------- 播放失败错误卡片（规范 §6，消化 D25） ----------------
+   四段式：原因 / 已尝试 / 操作按钮。mpv end-file reason=error 时触发，
+   从 mpv.log 尾部提取最后一条 [e] 错误行作为原因。 */
+
+const pushPlaybackError = (overrides) => {
+  if (!homeWin || homeWin.isDestroyed()) return;
+  const file = currentPath;
+  const reason = overrides?.reason || readLastMpvError();
+  const attempted = overrides?.attempted
+    || `硬件解码(${process.env.AURORA_HWDEC || 'auto-safe'}) → 软件解码兜底`;
+  const err = {
+    file,
+    reason: reason || '未知错误（详见 mpv 日志）',
+    attempted,
+  };
+  homeWin.webContents.send('mpv:error', err);
+};
+
+/** 从 mpv.log 尾部（最后 32KB）提取最后一条 [e] 错误行 */
+function readLastMpvError() {
+  try {
+    const f = MPV_LOG();
+    const size = fs.statSync(f).size;
+    if (!size) return null;
+    const fd = fs.openSync(f, 'r');
+    const len = Math.min(size, 32768);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, size - len);
+    fs.closeSync(fd);
+    const lines = buf.toString('utf8').split('\n').filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const m = lines[i].match(/\]\[e\]\[[^\]]+\]\s*(.*)$/);
+      if (m) return m[1].trim();
+    }
+  } catch {}
+  return null;
+}
+
 /* ---------------- 状态轮询 → 推送到窗口 + DLNA 进程 ---------------- */
 
 function dlnaSendState() {
@@ -330,7 +376,7 @@ function startStatusPolling() {
   if (statusTimer) return;
   statusTimer = setInterval(async () => {
     const [title, timePos, duration, pause, volume, mute, eof,
-      codec, vw, vh, fps, vfFps, drops, hwdec, vo, vb, ab, cacheDur] = await Promise.all([
+      codec, vw, vh, fps, vfFps, drops, hwdec, vo, vb, ab, cacheDur, idleActive] = await Promise.all([
       mpvGet('media-title'), mpvGet('time-pos'), mpvGet('duration'),
       mpvGet('pause'), mpvGet('volume'), mpvGet('mute'),
       mpvGet('eof-reached'),
@@ -338,12 +384,18 @@ function startStatusPolling() {
       mpvGet('container-fps'), mpvGet('estimated-vf-fps'), mpvGet('frame-drop-count'),
       mpvGet('hwdec-current'), mpvGet('current-vo'),
       mpvGet('video-bitrate'), mpvGet('audio-bitrate'), mpvGet('demuxer-cache-duration'),
+      mpvGet('idle-active'),
     ]);
     lastStatus = { title, timePos, duration, pause, volume, mute, eof: eof === true };
     const stats = { codec, w: vw, h: vh, fps, vfFps, drops, hwdec, vo, vBitrate: vb, aBitrate: ab, cacheDur };
     const status = { ...lastStatus, path: currentPath, casting, lockPolicy: settings.lockPolicy, idle: !mpvProc, stats };
     pushStatus(status);
     dlnaSendState();
+    // D25 载入失败判定：请求了文件但未收到 file-loaded，且 mpv 回到 idle → 失败
+    if (loadPending && idleActive === true) {
+      loadPending = false;
+      pushPlaybackError();
+    }
     // 记录续播位置
     if (currentPath && timePos != null && duration) updateRecentPosition(currentPath, timePos, duration);
     // 首次拿到时长 → 启动缩略图抽帧
@@ -392,6 +444,7 @@ function startPlayback(file, seek, castingInfo) {
   currentPath = file;
   casting = castingInfo || null;  // DLNA 投屏会话（规格 §8：CASTING 徽标）
   addRecent(file);
+  loadPending = true;   // D25：等待 file-loaded 确认；超时+idle-active → 判定失败
 
   // 单窗：复用唯一主窗口（透明），mpv --wid 嵌入其 HWND 在下层透出
   const doSpawn = () => {
@@ -402,7 +455,12 @@ function startPlayback(file, seek, castingInfo) {
   if (!homeWin || homeWin.isDestroyed()) {
     // 冷启动（命令行带文件路径）：直接以播放路由加载，避免 nav:goto 与渲染层监听注册竞态
     createHomeWindow('/player');
-    homeWin.once('ready-to-show', doSpawn);
+    // transparent 窗 ready-to-show 不可靠（偶发不触发）→ did-finish-load + 3s 超时双兜底
+    let spawned = false;
+    const safeSpawn = () => { if (!spawned) { spawned = true; doSpawn(); } };
+    homeWin.once('ready-to-show', safeSpawn);
+    homeWin.webContents.once('did-finish-load', safeSpawn);
+    setTimeout(safeSpawn, 3000);
   } else {
     homeWin.show();
     doSpawn();
@@ -420,6 +478,7 @@ function cleanupPlayback() {
   currentPath = null;
   casting = null;
   videoFs = false;
+  loadPending = false;
   lastStatus = { title: null, timePos: null, duration: null, pause: true, volume: 100, mute: false, eof: false };
   lastSentVolume = null;
   lastSentMute = null;
@@ -523,16 +582,28 @@ async function openFileFlow() {
 /* ---------------- 媒体库（本地刮削：文件名解析 + nfo + 同目录封面；无在线依赖） ---------------- */
 
 const LIBRARY_FILE = () => path.join(app.getPath('userData'), 'library.json');
+const LIBRARY_SCHEMA = 2;   // v2：新增 specs 规格标签（D27）
 const POSTER_DIR = () => path.join(app.getPath('userData'), 'posters');
 const VIDEO_EXTS = new Set(['mkv', 'mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'ts', 'm2ts', 'rmvb', 'mpg', 'mpeg']);
 const POSTER_NAMES = ['poster.jpg', 'poster.png', 'folder.jpg', 'cover.jpg', 'cover.png'];
 
 let library = [];
-try { library = JSON.parse(fs.readFileSync(LIBRARY_FILE(), 'utf8')); } catch {}
+let librarySchema = 0;
+try {
+  const raw = JSON.parse(fs.readFileSync(LIBRARY_FILE(), 'utf8'));
+  // v2 前是裸数组；升级标记不一致时强制全量重扫（补 specs 字段）
+  if (Array.isArray(raw)) {
+    library = raw;
+    librarySchema = 0;
+  } else {
+    library = raw.items || [];
+    librarySchema = raw.schema || 0;
+  }
+} catch {}
 let scanning = false;
 
 function saveLibrary() {
-  try { fs.writeFileSync(LIBRARY_FILE(), JSON.stringify(library, null, 2)); } catch {}
+  try { fs.writeFileSync(LIBRARY_FILE(), JSON.stringify({ schema: LIBRARY_SCHEMA, items: library }, null, 2)); } catch {}
 }
 
 function notifyLibrary() {
@@ -562,6 +633,28 @@ function parseName(filename) {
     .replace(/[-–—\s]+$/, '')
     .trim();
   return { title: title || base, year, season, episode };
+}
+
+/** 规格标签提取（D27）：分辨率 / HDR / ASS 字幕，从文件名+同目录 .ass 探测 */
+function parseSpecs(filename, dir) {
+  const s = filename.replace(/\.[^.]+$/, '');
+  const low = s.toLowerCase();
+  const specs = { res: null, hdr: null, sub: null };
+  if (/\b(2160p|4k|uhd)\b/.test(low)) specs.res = '4K';
+  else if (/\b1080p\b/.test(low)) specs.res = '1080p';
+  else if (/\b720p\b/.test(low)) specs.res = '720p';
+  if (/\b(dv|dovi|dolby.?vision)\b/.test(low)) specs.hdr = 'Dolby Vision';
+  else if (/\b(hdr10\+|hdr10plus)\b/.test(low)) specs.hdr = 'HDR10+';
+  else if (/\b(hdr10|hdr|pq)\b/.test(low)) specs.hdr = 'HDR10';
+  else if (/\bhlg\b/.test(low)) specs.hdr = 'HLG';
+  if (/\bass\b/.test(low)) specs.sub = 'ASS';
+  if (!specs.sub && dir) {
+    // 同目录 .ass 字幕文件（整目录算一次，命中任一即标记）
+    try {
+      if (fs.readdirSync(dir).some((f) => /\.ass$/i.test(f))) specs.sub = 'ASS';
+    } catch {}
+  }
+  return specs;
 }
 
 /** nfo 容错解析（<title>/<year>） */
@@ -643,7 +736,9 @@ function scanLibrary() {
   if (scanning) return;
   scanning = true;
   try {
-    const seen = new Map(library.map((it) => [it.path, it]));
+    // 库 schema 升级（如新增 specs 字段）→ 忽略增量缓存，全量重扫
+    const forceFull = librarySchema < LIBRARY_SCHEMA;
+    const seen = forceFull ? new Map() : new Map(library.map((it) => [it.path, it]));
     const next = [];
     for (const folder of settings.libraryFolders || []) {
       for (const file of walkVideos(folder)) {
@@ -663,6 +758,7 @@ function scanLibrary() {
           season: parsed.season, episode: parsed.episode,
           size: st.size, mtime: st.mtimeMs,
           poster: findPoster(dir, base) || null,
+          specs: parseSpecs(path.basename(file), dir),
         };
         if (!item.poster) {
           const gen = path.join(POSTER_DIR(), crypto.createHash('md5').update(file).digest('hex').slice(0, 12) + '.jpg');
@@ -673,6 +769,7 @@ function scanLibrary() {
     }
     next.sort((a, b) => b.mtime - a.mtime);
     library = next;
+    librarySchema = LIBRARY_SCHEMA;
     saveLibrary();
     notifyLibrary();
   } finally {
@@ -841,6 +938,40 @@ ipcMain.handle('sub:add', async () => {
 });
 ipcMain.handle('app:toggle-fullscreen', () => {
   if (homeWin && !homeWin.isDestroyed()) homeWin.setFullScreen(!videoFs);
+});
+
+/* ---------------- 播放失败操作（规范 §6 错误卡片；D25） ---------------- */
+
+ipcMain.handle('app:retry', (_e, software) => {
+  const file = currentPath;
+  if (!file) return false;
+  if (software) forceSoftwareDecode = true;
+  startPlayback(file);
+  return true;
+});
+
+ipcMain.handle('app:export-log', async () => {
+  if (!homeWin || homeWin.isDestroyed()) return null;
+  const { canceled, filePath } = await dialog.showSaveDialog(homeWin, {
+    title: '导出 mpv 日志',
+    defaultPath: path.join(app.getPath('downloads'), 'aurora-mpv.log'),
+    filters: [{ name: '日志文件', extensions: ['log', 'txt'] }],
+  });
+  if (canceled || !filePath) return null;
+  try { fs.copyFileSync(MPV_LOG(), filePath); return filePath; } catch { return null; }
+});
+
+/* 快照（规范 §8 快照 Ctrl+S；D31）：原始视频帧（video 模式，非 UI 截图） */
+ipcMain.handle('app:screenshot', async () => {
+  if (!mpvProc || !currentPath) return null;
+  const dir = path.join(app.getPath('userData'), 'snapshots');
+  fs.mkdirSync(dir, { recursive: true });
+  const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+  const name = `aurora-${ts}.png`;
+  const out = path.join(dir, name);
+  const r = await mpvCommand('screenshot-to-file', out, 'video');
+  if (r && r.error === 'success' && fs.existsSync(out)) return out;
+  return null;
 });
 
 /* 手动拖拽：透明窗在 Windows 上 -webkit-app-region:drag 失效（Electron 已知问题），
