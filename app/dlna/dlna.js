@@ -31,6 +31,7 @@ function loadCfg() {
 const state = {
   state: 'NO_MEDIA_PRESENT', // STOPPED/PLAYING/PAUSED_PLAYBACK/TRANSITIONING/NO_MEDIA_PRESENT
   uri: null, title: null, meta: null, metaRaw: '',
+  nextUri: null, nextTitle: null, nextMetaRaw: null, nextCp: null,   // D17：预载下一首
   pos: 0, dur: null,
   volume: 100, mute: false,
   cp: null,
@@ -38,10 +39,25 @@ const state = {
 
 const parent = process.parentPort;
 
+/* ---------------- dlna_session 持久化（D19：JSON 环形日志，500 条上限） ---------------- */
+const sessionFile = cfgFile ? path.join(path.dirname(cfgFile), 'dlna_sessions.json') : null;
+function recordSession(entry) {
+  if (!sessionFile) return;
+  const rec = { ts: new Date().toISOString(), ...entry };
+  try {
+    let arr = [];
+    try { arr = JSON.parse(fs.readFileSync(sessionFile, 'utf8')); } catch {}
+    if (!Array.isArray(arr)) arr = [];
+    arr.push(rec);
+    if (arr.length > 500) arr = arr.slice(-500);
+    fs.writeFileSync(sessionFile, JSON.stringify(arr));
+  } catch {}
+}
+
 async function main() {
   const cfg = loadCfg();
   const httpd = await startHttpd({
-    cfg, state, log,
+    cfg, state, log, recordSession,
     sendCmd: (m) => parent.postMessage({ type: 'cmd', ...m }),
   });
   cfg.port = httpd.port;
@@ -54,6 +70,7 @@ async function main() {
   parent.postMessage({ type: 'ready', friendlyName: cfg.friendlyName, port: cfg.port, udn: cfg.udn });
 
   /* 主进程 → dlna：状态推送 */
+  let eofHandled = false;
   parent.on('message', (e) => {
     const m = e.data;
     if (!m || m.type !== 'state') return;
@@ -63,8 +80,17 @@ async function main() {
     });
     if (m.uri !== undefined) state.uri = m.uri;
     if (m.title !== undefined) state.title = m.title;
-    if (m.state !== prev) httpd.emitAvt();           // 状态迁移 → LastChange
+    if (m.state !== prev) {
+      recordSession({ event: 'transition', from: prev, to: m.state, cp: state.cp || null, uri: state.uri || null });
+      httpd.emitAvt();           // 状态迁移 → LastChange
+    }
     if (m.volumeChanged || m.muteChanged) httpd.emitRc();
+    // D17：主进程上报播放结束(eof-reached) → 有预载则自动续播下一首
+    if (m.eof) {
+      if (state.nextUri && !eofHandled) { eofHandled = true; httpd.advanceNext(); }
+    } else {
+      eofHandled = false;
+    }
   });
 
   const shutdown = () => { ssdp.close(); process.exit(0); };

@@ -108,7 +108,7 @@ function deviceDesc(cfg) {
 function scpd(service) {
   const defs = {
     avtransport: {
-      actions: ['SetAVTransportURI', 'Play', 'Pause', 'Stop', 'Seek', 'GetTransportInfo',
+      actions: ['SetAVTransportURI', 'SetNextAVTransportURI', 'Play', 'Pause', 'Stop', 'Seek', 'GetTransportInfo',
         'GetPositionInfo', 'GetMediaInfo', 'GetTransportSettings', 'GetCurrentTransportActions'],
       vars: ['TransportState', 'TransportStatus', 'CurrentTrackURI', 'AVTransportURI', 'CurrentTrackDuration',
         'RelativeTimePosition', 'AbsoluteTimePosition', 'CurrentPlayMode', 'CurrentTransportActions',

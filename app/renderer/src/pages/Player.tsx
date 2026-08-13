@@ -57,6 +57,7 @@ function ConsoleDrawer({ meta, status, onLocalMeta, onClose }: {
   const [subDelay, setSubDelay] = useState(0);
   const [audioDelay, setAudioDelay] = useState(0);
   const [subSize, setSubSize] = useState(34);
+  const [tune, setTune] = useState({ targetPeak: 0, targetContrast: 0, saturation: 0, hdrPeakPercentile: 99.995 });
 
   useEffect(() => {
     (async () => {
@@ -71,7 +72,19 @@ function ConsoleDrawer({ meta, status, onLocalMeta, onClose }: {
       if (typeof ad === 'number') setAudioDelay(ad);
       if (typeof ss === 'number') setSubSize(ss);
     })();
+    window.aurora.getSettings().then((s) => setTune({
+      targetPeak: s.targetPeak ?? 0,
+      targetContrast: s.targetContrast ?? 0,
+      saturation: s.saturation ?? 0,
+      hdrPeakPercentile: s.hdrPeakPercentile ?? 99.995,
+    }));
   }, []);
+
+  // D23 高级调参：改值即写 settings（主进程据此重跑决策链，实时生效）
+  const tuneSet = (k: keyof typeof tune, v: number) => {
+    setTune((t) => ({ ...t, [k]: v }));
+    window.aurora.setSettings({ [k]: v });
+  };
 
   const set = (prop: string, v: unknown) => window.aurora.mpv('set_property', prop, v);
   const pickTrack = (type: 'audio' | 'sub', id: number | 'no') => {
@@ -224,20 +237,51 @@ function ConsoleDrawer({ meta, status, onLocalMeta, onClose }: {
           </>
         )}
         {tab === 'adv' && (
-          <div className="row">
-            <label>实时性能（2Hz）</label>
-            <div className="info-grid">
-              <span>编码</span><span>{status?.stats?.codec || '—'}</span>
-              <span>分辨率</span><span>{status?.stats?.w ? `${status.stats.w}×${status.stats.h}` : '—'}</span>
-              <span>硬件解码</span><span>{status?.stats?.hwdec || '—'}</span>
-              <span>输出</span><span>{status?.stats?.vo || '—'}</span>
-              <span>帧率</span><span>{status?.stats?.fps ? `${status.stats.fps.toFixed(2)} fps（容器） / ${(status.stats.vfFps ?? 0).toFixed(2)} fps（实际）` : '—'}</span>
-              <span>丢帧</span><span>{status?.stats?.drops ?? '—'}</span>
-              <span>视频码率</span><span>{status?.stats?.vBitrate ? `${(status.stats.vBitrate / 1e6).toFixed(2)} Mbps` : '—'}</span>
-              <span>音频码率</span><span>{status?.stats?.aBitrate ? `${Math.round(status.stats.aBitrate / 1e3)} kbps` : '—'}</span>
-              <span>缓存</span><span>{status?.stats?.cacheDur != null ? `${status.stats.cacheDur.toFixed(1)}s` : '—'}</span>
+          <>
+            <div className="row">
+              <label>HDR 高级调参<span className="val">（实时生效，0 = 自动）</span></label>
+              <div className="tune">
+                <div className="tune-row">
+                  <span>目标峰值</span>
+                  <input type="range" min={0} max={4000} step={50} value={tune.targetPeak}
+                    onChange={(e) => tuneSet('targetPeak', +e.target.value)} />
+                  <span className="val timecode">{tune.targetPeak > 0 ? `${tune.targetPeak} nits` : '自动'}</span>
+                </div>
+                <div className="tune-row">
+                  <span>对比度恢复</span>
+                  <input type="range" min={0} max={10000} step={100} value={tune.targetContrast}
+                    onChange={(e) => tuneSet('targetContrast', +e.target.value)} />
+                  <span className="val timecode">{tune.targetContrast > 0 ? `${tune.targetContrast}:1` : '自动'}</span>
+                </div>
+                <div className="tune-row">
+                  <span>饱和度</span>
+                  <input type="range" min={-1} max={1} step={0.05} value={tune.saturation}
+                    onChange={(e) => tuneSet('saturation', +e.target.value)} />
+                  <span className="val timecode">{tune.saturation > 0 ? '+' : ''}{tune.saturation.toFixed(2)}</span>
+                </div>
+                <div className="tune-row">
+                  <span>峰值百分位</span>
+                  <input type="range" min={50} max={100} step={0.05} value={tune.hdrPeakPercentile}
+                    onChange={(e) => tuneSet('hdrPeakPercentile', +e.target.value)} />
+                  <span className="val timecode">{tune.hdrPeakPercentile.toFixed(2)}%</span>
+                </div>
+              </div>
             </div>
-          </div>
+            <div className="row">
+              <label>实时性能（2Hz）</label>
+              <div className="info-grid">
+                <span>编码</span><span>{status?.stats?.codec || '—'}</span>
+                <span>分辨率</span><span>{status?.stats?.w ? `${status.stats.w}×${status.stats.h}` : '—'}</span>
+                <span>硬件解码</span><span>{status?.stats?.hwdec || '—'}</span>
+                <span>输出</span><span>{status?.stats?.vo || '—'}</span>
+                <span>帧率</span><span>{status?.stats?.fps ? `${status.stats.fps.toFixed(2)} fps（容器） / ${(status.stats.vfFps ?? 0).toFixed(2)} fps（实际）` : '—'}</span>
+                <span>丢帧</span><span>{status?.stats?.drops ?? '—'}</span>
+                <span>视频码率</span><span>{status?.stats?.vBitrate ? `${(status.stats.vBitrate / 1e6).toFixed(2)} Mbps` : '—'}</span>
+                <span>音频码率</span><span>{status?.stats?.aBitrate ? `${Math.round(status.stats.aBitrate / 1e3)} kbps` : '—'}</span>
+                <span>缓存</span><span>{status?.stats?.cacheDur != null ? `${status.stats.cacheDur.toFixed(1)}s` : '—'}</span>
+              </div>
+            </div>
+          </>
         )}
       </div>
     </div>
@@ -253,11 +297,24 @@ export default function Player() {
   const [drawer, setDrawer] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [bubble, setBubble] = useState<{ x: number; t: number; ch: string | null; thumb: string | null } | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => window.aurora.onStatus(setStatus), []);
   useEffect(() => window.aurora.onMeta(setMeta), []);
+  useEffect(() => window.aurora.onCastToast((t) => {
+    setToast(t);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 3000);
+  }), []);
+
+  // 规格 §8 锁定策略：投屏期间本地控制权（none 全控 / takeover 仅音量字幕 / full 仅停止投屏）
+  const castingActive = !!status?.casting;
+  const lock = status?.lockPolicy ?? 'none';
+  const playLocked = castingActive && lock !== 'none';   // takeover/full 均禁播放进度控制
+  const volLocked = castingActive && lock === 'full';    // 仅 full 锁音量
 
   // 设置项（滚轮步进）
   const volStep = useRef(2);
@@ -289,24 +346,25 @@ export default function Player() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       switch (e.key) {
-        case ' ': e.preventDefault(); window.aurora.mpv('cycle', 'pause'); break;
-        case 'ArrowRight': window.aurora.mpv('seek', 5); break;
-        case 'ArrowLeft': window.aurora.mpv('seek', -5); break;
-        case 'ArrowUp': e.preventDefault(); window.aurora.mpv('add', 'volume', 5); break;
-        case 'ArrowDown': e.preventDefault(); window.aurora.mpv('add', 'volume', -5); break;
-        case 'm': case 'M': window.aurora.mpv('cycle', 'mute'); break;
+        case ' ': if (playLocked) return; e.preventDefault(); window.aurora.mpv('cycle', 'pause'); break;
+        case 'ArrowRight': if (playLocked) return; window.aurora.mpv('seek', 5); break;
+        case 'ArrowLeft': if (playLocked) return; window.aurora.mpv('seek', -5); break;
+        case 'ArrowUp': if (volLocked) return; e.preventDefault(); window.aurora.mpv('add', 'volume', 5); break;
+        case 'ArrowDown': if (volLocked) return; e.preventDefault(); window.aurora.mpv('add', 'volume', -5); break;
+        case 'm': case 'M': if (volLocked) return; window.aurora.mpv('cycle', 'mute'); break;
         case 'f': case 'F': window.aurora.toggleFullscreen(); break;
         case 'Escape': setMenu(null); setDrawer(false); setCtxMenu(null); break;
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [playLocked, volLocked]);
 
   /* ----- 单击暂停 / 双击全屏（e.detail 去抖） ----- */
   const onVideoClick = (e: React.MouseEvent) => {
     setCtxMenu(null);
     setMenu(null);
+    if (playLocked) return;
     if (e.detail === 1) {
       clickTimer.current = setTimeout(() => window.aurora.mpv('cycle', 'pause'), 240);
     } else if (e.detail === 2) {
@@ -318,13 +376,14 @@ export default function Player() {
   /* ----- 进度条 ----- */
   const dur = status?.duration ?? 0;
   const seekFromEvent = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (playLocked) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
     window.aurora.mpv('seek', frac * 100, 'absolute-percent');
   };
   const lastThumbT = useRef(-1);
   const onSeekHover = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (dur <= 0) return;
+    if (dur <= 0 || playLocked) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
     const t = frac * dur;
@@ -375,7 +434,7 @@ export default function Player() {
     <div
       className={`overlay${ready ? ' ready' : ''}${idle && !pinned ? ' idle' : ''}`}
       onClick={onVideoClick}
-      onWheel={(e) => window.aurora.mpv('add', 'volume', e.deltaY < 0 ? volStep.current : -volStep.current)}
+      onWheel={(e) => { if (!volLocked) window.aurora.mpv('add', 'volume', e.deltaY < 0 ? volStep.current : -volStep.current); }}
       onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
     >
       {/* 顶部拖拽条：拖动移窗，双击全屏；阻断单击穿透到播放暂停 */}
@@ -396,6 +455,12 @@ export default function Player() {
           <div className="casting-badge glass-1">
             <div className="live" />
             CASTING · {status.casting.cp}
+            {lock !== 'none' && (
+              <span className="lock-chip" title={lock === 'full' ? '完全锁定：本地仅可停止投屏' : '投屏接管：本地仅音量/字幕'}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+                {lock === 'full' ? '锁定' : '接管'}
+              </span>
+            )}
           </div>
         )}
         <div className="title">{status?.title || '加载中…'}</div>
@@ -411,8 +476,8 @@ export default function Player() {
         <button className="icon-btn" title="最大化/还原" onClick={(e) => { e.stopPropagation(); window.aurora.toggleMaximize(); }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
         </button>
-        <button className="icon-btn" title="关闭并返回首页" onClick={(e) => { e.stopPropagation(); window.aurora.stop(); }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        <button className="icon-btn" title="返回首页" onClick={(e) => { e.stopPropagation(); window.aurora.stop(); }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 11l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10"/></svg>
         </button>
       </div>
 
@@ -436,7 +501,7 @@ export default function Player() {
         </div>
 
         <div className="controls-row">
-          <button className="primary-btn" title="播放/暂停 (空格)" onClick={() => window.aurora.mpv('cycle', 'pause')}>
+          <button className="primary-btn" title={playLocked ? '投屏接管中' : '播放/暂停 (空格)'} disabled={playLocked} onClick={() => window.aurora.mpv('cycle', 'pause')}>
             {paused ? (
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v13.72c0 .8.87 1.3 1.56.88l11-6.86a1.03 1.03 0 0 0 0-1.76l-11-6.86A1.03 1.03 0 0 0 8 5.14z"/></svg>
             ) : (
@@ -447,7 +512,7 @@ export default function Player() {
           <div className="time timecode"><b>{fmt(pos)}</b> / {fmt(dur)}</div>
 
           <div className="volume">
-            <button className="icon-btn" title="静音 (M)" onClick={() => window.aurora.mpv('cycle', 'mute')}>
+            <button className="icon-btn" title={volLocked ? '已锁定' : '静音 (M)'} disabled={volLocked} onClick={() => window.aurora.mpv('cycle', 'mute')}>
               {status?.mute || status?.volume === 0 ? (
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor" stroke="none"/><path d="M22 9l-6 6M16 9l6 6"/></svg>
               ) : (
@@ -455,6 +520,7 @@ export default function Player() {
               )}
             </button>
             <div className="vol-track" onClick={(e) => {
+              if (volLocked) return;
               const rect = e.currentTarget.getBoundingClientRect();
               const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
               window.aurora.mpv('set_property', 'volume', Math.round(frac * 100));
@@ -499,6 +565,9 @@ export default function Player() {
           <button className="mi" onClick={() => { window.aurora.stop(); setCtxMenu(null); }}>停止并返回首页</button>
         </div>
       )}
+
+      {/* 投屏互抢 Toast（规格 §8） */}
+      {toast && <div className="cast-toast glass-2">{toast}</div>}
     </div>
   );
 }

@@ -177,6 +177,13 @@ async function main() {
   const st2 = tagOf((await callSoap(base, 'avt', 'AVTransport', 'GetTransportInfo', { InstanceID: 0 })).body, 'CurrentTransportState');
   ok('Stop → STOPPED/NO_MEDIA', ['STOPPED', 'NO_MEDIA_PRESENT'].includes(st2 || ''), st2 || '');
 
+  /* 6.5 预载下一首（D17） */
+  console.log('[6.5] SetNextAVTransportURI 预载');
+  r = await callSoap(base, 'avt', 'AVTransport', 'SetNextAVTransportURI', { InstanceID: 0, NextURI: mediaUrl, NextURIMetaData: '' });
+  ok('SetNextAVTransportURI', r.status === 200, String(r.status));
+  const nextUri = tagOf((await callSoap(base, 'avt', 'AVTransport', 'GetMediaInfo', { InstanceID: 0 })).body, 'NextURI');
+  ok('GetMediaInfo 含 NextURI', nextUri === mediaUrl, nextUri || '');
+
   /* 7. 事件与退订 */
   console.log('[7] 事件推送与退订');
   ok('状态迁移产生 LastChange NOTIFY(≥3 条)', notifyLog.length >= 3, `${notifyLog.length} 条`);

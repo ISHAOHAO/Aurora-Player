@@ -93,7 +93,7 @@ http-get:*:audio/mpeg:*, audio/mp4:*, audio/flac:*, audio/wav:* ...
 | Action | 说明 | 备注 |
 | --- | --- | --- |
 | SetAVTransportURI | 设置媒体 URL + CurrentURIMetaData(DIDL-Lite) | 支持 http/https；解析 title/artist/协议信息 |
-| SetNextAVTransportURI | 预载下一首 | P1 |
+| SetNextAVTransportURI | 预载下一首 | ✅ 已实现（2026-08-13）：预载 → 当前曲目 eof 自动续播，GetMediaInfo 回报 NextURI |
 | Play | Speed=1 起播 | 异步：先回应答，内部 LOADING→PLAYING |
 | Pause / Stop | 暂停/停止 | Stop 保留最后帧 2s 后淡出 |
 | Seek | `REL_TIME`（HH:MM:SS）与 `X_DLNA_REL_BYTE` | 直播/不可 seek → 返回 710/711 错误并禁用 UI seek |
@@ -171,7 +171,7 @@ FFmpeg avio → demux → decode → render
 
 本地用户操作时若 CP 正在控制：执行本地操作并向 CP 推送状态（LastChange），不弹冲突提示；连续 3 秒内双向互抢 → Toast 提示“正在由 <设备> 投放”。
 
-- 锁定策略（设置可选）：不锁定（默认）/ 投屏接管（本地仅音量字幕等有限控制）/ 完全锁定（仅允许停止投屏）。
+- 锁定策略（设置可选）：不锁定（默认）/ 投屏接管（本地仅音量字幕等有限控制）/ 完全锁定（仅允许停止投屏）。✅ 已实现（2026-08-13，设置 → DLNA → 投屏控制权；3s 双向互抢 Toast 见「正在由 <设备> 投放」）。
 
 ---
 
@@ -215,7 +215,7 @@ PLAYING/PAUSED → STOPPED → IDLE
 任意状态 → DISCONNECTING(网络丢失) → DISCOVERABLE(自动恢复宣告)
 ```
 
-每次迁移写入 `dlna_session` 表（时间、CP 标识、URI、结果），供诊断与统计。
+每次迁移写入 `dlna_session` 表（时间、CP 标识、URI、结果），供诊断与统计。✅ 已实现（2026-08-13）：`userData/dlna_sessions.json` 环形 JSON 日志（500 条上限），事件 set_uri/set_next/stop/advance/transition。
 
 ---
 

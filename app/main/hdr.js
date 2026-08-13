@@ -30,8 +30,9 @@ function hdrKind(gamma) {
  * @param video   { gamma, primaries, sigPeak }  来自 video-params/*
  * @param display { hdr, peak }                  hdr: 显示器 HDR 能力（主进程从 VO 日志 "Queried output" 解析）
  * @param override { mode, algo }
+ * @param tune    { targetPeak, targetContrast, saturation, hdrPeakPercentile }  高级调参（D23）
  */
-function decide(video, display, override = {}) {
+function decide(video, display, override = {}, tune = {}) {
   const kind = hdrKind(video.gamma);
   const videoHdr = !!kind;
   const displayHdr = !!display.hdr;
@@ -48,11 +49,19 @@ function decide(video, display, override = {}) {
     override: override.mode || 'auto',
   };
 
+  // 高级调参 → mpv 属性（0/undefined = 不设置，走 mpv 自动）
+  const tuneProps = {};
+  if (typeof tune.saturation === 'number' && tune.saturation !== 0) tuneProps.saturation = tune.saturation;
+  if (typeof tune.hdrPeakPercentile === 'number' && tune.hdrPeakPercentile > 0) tuneProps['hdr-peak-percentile'] = tune.hdrPeakPercentile;
+  const tonemapTune = { ...tuneProps };
+  if (tune.targetPeak > 0) tonemapTune['target-peak'] = tune.targetPeak;
+  if (tune.targetContrast > 0) tonemapTune['target-contrast'] = tune.targetContrast;
+
   if (!videoHdr) {
     return {
       ...base, mode: 'sdr',
       reason: 'SDR 片源，原生输出（SDR→HDR 为实验项，默认关）',
-      props: { 'target-colorspace-hint': 'no' },
+      props: { 'target-colorspace-hint': 'no', ...tuneProps },
     };
   }
 
@@ -66,6 +75,7 @@ function decide(video, display, override = {}) {
       props: {
         'target-colorspace-hint': 'yes',
         'hdr-compute-peak': 'no',
+        ...tuneProps,
       },
     };
   }
@@ -80,6 +90,7 @@ function decide(video, display, override = {}) {
       'tone-mapping': algo,
       'hdr-compute-peak': 'yes',       // 逐帧峰值检测，暗场/亮场自适应
       'gamut-mapping-mode': 'perceptual',
+      ...tonemapTune,
     },
   };
 }

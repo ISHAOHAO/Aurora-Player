@@ -137,11 +137,33 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
 .icon-btn:active { transform: scale(.95); }
 .icon-btn svg { width: 20px; height: 20px; }
 
+/* ---------- 窗口控制三键（透明窗无原生标题栏） ---------- */
+.win-controls { display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.win-btn {
+  width: 34px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 6px; color: var(--text-secondary);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.win-btn:hover { background: rgba(128, 128, 128, .18); color: var(--text-primary); }
+.win-btn.close:hover { background: #E5484D; color: #fff; }
+.win-btn svg { width: 15px; height: 15px; }
+
 .timecode { font-variant-numeric: tabular-nums; letter-spacing: .02em; }
 
 /* ==================== 设置页（规范 §3.4） ==================== */
-.settings-page { position: relative; z-index: 1; height: 100vh; display: flex; max-width: 1100px; margin: 0 auto; }
+.settings-page { position: relative; z-index: 1; height: 100vh; display: flex; flex-direction: column; max-width: 1100px; margin: 0 auto; }
+.settings-topbar {
+  position: relative; z-index: 2;
+  display: flex; align-items: center; gap: 16px;
+  height: 48px; flex-shrink: 0; padding: 0 12px 0 20px;
+  border-bottom: 1px solid var(--hairline);
+}
+.settings-topbar .spacer { margin-left: auto; }
+.settings-topbar .back { color: var(--text-muted); font-size: 14px; padding: 6px 10px; border-radius: 8px; }
+.settings-topbar .back:hover { background: var(--surface-hover); color: var(--text-primary); }
+.settings-main { position: relative; z-index: 1; flex: 1; display: flex; min-height: 0; }
 .settings-nav {
+  position: relative; z-index: 1;
   width: 200px; flex-shrink: 0; padding: 24px 12px;
   display: flex; flex-direction: column; gap: 2px;
   border-right: 1px solid var(--hairline);
@@ -153,8 +175,7 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
 }
 .settings-nav button:hover { background: var(--surface-hover); color: var(--text-primary); }
 .settings-nav button.on { background: var(--surface-2); color: var(--text-primary); font-weight: 500; }
-.settings-nav .back { color: var(--text-muted); margin-bottom: 12px; }
-.settings-body { flex: 1; padding: 32px 40px; overflow-y: auto; }
+.settings-body { position: relative; z-index: 1; flex: 1; padding: 32px 40px; overflow-y: auto; }
 .srow {
   display: flex; align-items: center; justify-content: space-between; gap: 24px;
   padding: 14px 0; border-bottom: 1px solid var(--hairline);
@@ -370,7 +391,7 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
   position: absolute; top: 0; left: 0; right: 0; height: 14px; z-index: 30;
 }
 /* 8 向边缘缩放热区（透明窗无原生边框；DWM 隐形边框会吃掉外侧 ~7px，热区内扩至 10px） */
-.rz { position: absolute; z-index: 40; }
+.rz { position: fixed; z-index: 40; }
 .rz-n { top: 0; left: 16px; right: 16px; height: 10px; cursor: ns-resize; }
 .rz-s { bottom: 0; left: 16px; right: 16px; height: 10px; cursor: ns-resize; }
 .rz-e { right: 0; top: 16px; bottom: 16px; width: 10px; cursor: ew-resize; }
@@ -451,6 +472,13 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
   color: var(--ov-text); flex-shrink: 0;
 }
 .casting-badge .live { width: 6px; height: 6px; border-radius: 999px; background: #E8B06A; }
+.casting-badge .lock-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 0 6px; margin-left: 4px; height: 18px;
+  border-radius: 5px; font-size: 10px; letter-spacing: .02em;
+  color: var(--ov-text-2); background: var(--ov-btn-bg);
+}
+.casting-badge .lock-chip svg { width: 11px; height: 11px; }
 
 /* ---------- 轨道菜单 / 右键菜单（浮层，跟随主题） ---------- */
 .pop-menu {
@@ -545,6 +573,25 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
   border: 1px solid var(--ov-btn-border);
 }
 
+/* ---------- 投屏互抢 Toast（规格 §8） ---------- */
+.cast-toast {
+  position: fixed; left: 50%; top: 76px; transform: translateX(-50%);
+  padding: 10px 18px; border-radius: 999px;
+  font-size: 13px; color: var(--ov-text); z-index: 60;
+  pointer-events: none;
+  animation: toast-in var(--dur-normal) var(--ease-out);
+}
+@keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(-6px); } }
+
+/* 锁定态：禁用的播放/音量按钮 */
+.primary-btn:disabled, .icon-btn:disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
+
+/* ---------- 控制台：HDR 高级调参（D23） ---------- */
+.tune { display: flex; flex-direction: column; gap: 10px; }
+.tune-row { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--ov-text-2); }
+.tune-row input[type="range"] { flex: 1; accent-color: var(--accent); }
+.tune-row .val { min-width: 64px; text-align: right; color: var(--ov-text); }
+
 /* ---------- 首页：URL 弹窗 ---------- */
 .url-modal-mask {
   position: fixed; inset: 0; z-index: 50;
@@ -565,6 +612,42 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
 }
 .url-modal input:focus { border-color: var(--accent); }
 .url-modal .ops { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+
+/* NAS 在线浏览器 */
+.nas-browser { width: 560px; }
+.nas-pathbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.nas-pathbar .p {
+  flex: 1; font-size: 12px; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left;
+}
+.nas-list {
+  max-height: 320px; overflow-y: auto;
+  border: 1px solid var(--hairline); border-radius: var(--radius-ctrl);
+  padding: 4px;
+}
+.nas-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 8px 10px; border-radius: 8px; text-align: left;
+  font-size: 13px; color: var(--text-primary);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.nas-item:hover { background: var(--surface-hover); }
+.nas-item svg { width: 18px; height: 18px; flex-shrink: 0; color: var(--text-secondary); }
+.nas-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 设置页：动作按钮 + 文件夹路径 */
+.seg-action {
+  height: 30px; padding: 0 14px; border-radius: 8px; flex-shrink: 0;
+  font-size: 12px; color: var(--text-secondary);
+  background: var(--surface-2); border: 1px solid var(--hairline);
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.seg-action:hover:not(:disabled) { color: var(--text-primary); background: var(--surface-hover); }
+.seg-action:disabled { color: var(--accent); }
+.folder-path {
+  font-size: 13px; color: var(--text-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left;
+}
 .url-modal .ops button {
   height: 34px; padding: 0 16px; border-radius: 999px; font-size: 13px; font-weight: 500;
   color: var(--text-secondary);

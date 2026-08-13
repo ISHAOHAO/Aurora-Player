@@ -36,7 +36,7 @@ const parseTime = (str) => {
   return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]) : null;
 };
 
-function startHttpd({ cfg, state, sendCmd, log }) {
+function startHttpd({ cfg, state, sendCmd, log, recordSession }) {
   const subscribers = new Map(); // sid -> {service, callbacks[], seq, timer, fails}
   const icons = { '/icon48.png': X.makeIcon(48), '/icon120.png': X.makeIcon(120) };
 
@@ -59,7 +59,22 @@ function startHttpd({ cfg, state, sendCmd, log }) {
       state.cp = req.socket.remoteAddress;
       sendCmd({ cmd: 'load', uri, title: state.title, cp: state.cp });
       log('SetAVTransportURI', state.cp, uri);
+      recordSession?.({ event: 'set_uri', cp: state.cp, uri, title: state.title, result: 'ok' });
       emitAvt();
+      return {};
+    },
+    SetNextAVTransportURI(args, req) {   // D17：预载下一首（当前曲目结束时自动续播）
+      const uri = (args.NextURI || '').trim();
+      if (!uri) throw fault(714, 'empty NextURI');
+      if (!/^https?:\/\//i.test(uri)) throw fault(714, 'scheme not allowed');
+      if (!assertLanUrl(uri)) throw fault(714, 'SSRF guard: non-LAN address rejected');
+      state.nextMetaRaw = args.NextURIMetaData || '';
+      const meta = X.parseDidl(state.nextMetaRaw);
+      state.nextUri = uri;
+      state.nextTitle = meta.title || uri.split('/').pop() || uri;
+      state.nextCp = req.socket.remoteAddress;
+      log('SetNextAVTransportURI', state.nextCp, uri);
+      recordSession?.({ event: 'set_next', cp: state.nextCp, uri, result: 'ok' });
       return {};
     },
     Play(args) {
@@ -76,6 +91,7 @@ function startHttpd({ cfg, state, sendCmd, log }) {
       sendCmd({ cmd: 'stop' });
       state.state = 'STOPPED'; state.pos = 0;
       log('Stop', state.cp || '-', state.uri || '-');
+      recordSession?.({ event: 'stop', cp: state.cp || null, uri: state.uri || null, result: 'ok' });
       emitAvt();
       return {};
     },
@@ -115,7 +131,7 @@ function startHttpd({ cfg, state, sendCmd, log }) {
         MediaDuration: fmtTime(state.dur),
         CurrentURI: state.uri || '',
         CurrentURIMetaData: state.metaRaw || '',
-        NextURI: '', NextURIMetaData: '',
+        NextURI: state.nextUri || '', NextURIMetaData: state.nextMetaRaw || '',
         PlayMedium: 'NETWORK', RecordMedium: 'NOT_IMPLEMENTED', WriteStatus: 'NOT_IMPLEMENTED',
       };
     },
@@ -186,6 +202,25 @@ function startHttpd({ cfg, state, sendCmd, log }) {
   }
   const emitAvt = () => emit('avt');
   const emitRc = () => emit('rc');
+
+  /* 预载续播：当前曲目播放结束（主进程上报 eof）时，若存在 nextUri 则自动加载下一首 */
+  function advanceNext() {
+    if (!state.nextUri) return false;
+    const next = state.nextUri;
+    state.uri = next;
+    state.title = state.nextTitle || next.split('/').pop() || next;
+    state.metaRaw = state.nextMetaRaw || '';
+    state.meta = X.parseDidl(state.metaRaw);
+    state.cp = state.nextCp || state.cp;
+    state.nextUri = null; state.nextTitle = null; state.nextMetaRaw = null; state.nextCp = null;
+    state.state = 'STOPPED';
+    state.pos = 0; state.dur = state.meta.duration ? parseTime(state.meta.duration) : null;
+    sendCmd({ cmd: 'load', uri: next, title: state.title, cp: state.cp });
+    log('自动续播', state.cp, next);
+    recordSession?.({ event: 'advance', cp: state.cp, uri: next, result: 'ok' });
+    emitAvt();
+    return true;
+  }
 
   function postNotify(urlStr, body, sid, sub, service) {
     let u;
@@ -312,7 +347,7 @@ function startHttpd({ cfg, state, sendCmd, log }) {
       if (e.code === 'EADDRINUSE' && cfg.port < 53300) { cfg.port++; server.listen(cfg.port); }
       else throw e;
     });
-    server.listen(cfg.port, () => resolve({ server, port: cfg.port, emitAvt, emitRc }));
+    server.listen(cfg.port, () => resolve({ server, port: cfg.port, emitAvt, emitRc, advanceNext }));
   });
 }
 

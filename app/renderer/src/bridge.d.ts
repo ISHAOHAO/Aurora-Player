@@ -1,4 +1,10 @@
 /** window.aurora — preload 暴露的桥接 API 类型 */
+export interface NasEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+}
+
 export interface RecentItem {
   path: string;
   name: string;
@@ -31,6 +37,7 @@ export interface PlayerStatus {
   mute: boolean | null;
   idle: boolean;
   casting?: { cp: string; title?: string } | null;
+  lockPolicy?: 'none' | 'takeover' | 'full';
   stats?: PlayerStats;
 }
 
@@ -51,7 +58,12 @@ export interface Settings {
   dlnaEnabled: boolean;
   dlnaFriendlyName: string;
   bgCasting: boolean;
+  lockPolicy: 'none' | 'takeover' | 'full';
   libraryFolders: string[];
+  targetPeak: number;
+  targetContrast: number;
+  saturation: number;
+  hdrPeakPercentile: number;
 }
 
 export interface LibraryItem {
@@ -122,15 +134,23 @@ export interface AuroraBridge {
   /** 媒体库 */
   getLibrary: () => Promise<LibraryItem[]>;
   rescanLibrary: () => Promise<boolean>;
+  /** 清空媒体库条目(保留文件夹配置) */
+  clearLibrary: () => Promise<boolean>;
+  /** 清除最近播放记录 */
+  clearRecent: () => Promise<boolean>;
   addLibraryFolder: () => Promise<string[]>;
-  /** NAS/SMB：添加 UNC 共享(自动入库扫描); needAuth 时可调 openNasExplorer 登录 */
-  addNasShare: (input: string) => Promise<{ ok: boolean; error?: string; unc?: string; needAuth?: boolean }>;
+  /** NAS 在线浏览：列目录(文件夹+视频)，在线点播不入库 */
+  listNas: (dir: string) => Promise<{ ok: boolean; unc?: string; entries?: NasEntry[]; error?: string; needAuth?: boolean }>;
   openNasExplorer: (unc: string) => Promise<void>;
   onLibraryUpdated: (cb: (items: LibraryItem[]) => void) => () => void;
+  /** 主进程路由切换指令（nav:goto，值为 home/settings/player） */
+  onNavigate: (cb: (route: string) => void) => () => void;
   /** 播放状态推送(播放会话期间 ~2Hz) */
   onStatus: (cb: (s: PlayerStatus) => void) => () => void;
   /** 元数据推送(file-loaded 时:轨道/章节) */
   onMeta: (cb: (m: PlayerMeta) => void) => () => void;
+  /** 投屏互抢 Toast（规格 §8：正在由 <设备> 投放） */
+  onCastToast: (cb: (text: string) => void) => () => void;
   /** 切换播放窗口全屏 */
   toggleFullscreen: () => Promise<void>;
   /** HDR 覆盖：mode auto/passthrough/tonemap, algo 色调映射算法 */
@@ -147,6 +167,7 @@ export interface AuroraBridge {
   resizeEnd: () => void;
   minimizeWindow: () => void;
   toggleMaximize: () => void;
+  closeWindow: () => void;
 }
 
 declare global {

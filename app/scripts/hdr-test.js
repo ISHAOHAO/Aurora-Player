@@ -46,5 +46,15 @@ eq('SDR 源不受覆盖影响', d.mode, 'sdr');
 d = decide({ gamma: 'pq' }, { hdr: false }, { mode: 'tonemap', algo: 'not-exist' });
 eq('非法算法回退默认', d.props['tone-mapping'], 'spline');
 
+// 高级调参（D23）
+d = decide({ gamma: 'pq' }, { hdr: false }, {}, { targetPeak: 800, targetContrast: 1000, saturation: 0.1, hdrPeakPercentile: 99.5 });
+eq('调参注入目标峰值', d.props['target-peak'], 800);
+eq('调参注入对比度', d.props['target-contrast'], 1000);
+eq('调参注入饱和度', d.props.saturation, 0.1);
+eq('调参注入峰值百分位', d.props['hdr-peak-percentile'], 99.5);
+d = decide({ gamma: 'pq' }, { hdr: false }, {}, {});
+eq('未调参不注入 target-peak', d.props['target-peak'], undefined);
+eq('未调参不注入 saturation', d.props.saturation, undefined);
+
 console.log(`\n结果：${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);

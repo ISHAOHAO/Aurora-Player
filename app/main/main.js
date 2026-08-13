@@ -1,9 +1,9 @@
 /**
  * Aurora Player — 主进程
- * 窗口模型（M3 修复版，黑屏根因：Chromium DComp 合成层遮盖 mpv 子窗口）：
- *   homeWin   主窗口，React #/home（媒体中心首页）
- *   videoWin  播放窗口：transparent 透明窗，React #/player 自绘控制层在上，
- *             mpv --wid 子窗口嵌入在下层透出（单窗方案，无独立叠加窗）
+ * 窗口模型（单窗方案）：唯一主窗口 transparent 透明窗，React hash 路由 #/home、
+ * #/settings、#/player 同窗切换；首页/设置 body 不透明遮住下层，播放路由 body
+ * 透明透出 mpv --wid 子窗口（黑屏根因：Chromium DComp 合成层遮盖 mpv 子窗口，
+ * 故窗口必须 transparent）。
  */
 const { app, BrowserWindow, Menu, dialog, ipcMain, utilityProcess, Tray, nativeImage, screen } = require('electron');
 const { spawn } = require('child_process');
@@ -19,7 +19,7 @@ const PRELOAD = path.join(__dirname, '..', 'preload', 'preload.js');
 const DLNA_ENTRY = path.join(__dirname, '..', 'dlna', 'dlna.js');
 const RECENT_FILE = () => path.join(app.getPath('userData'), 'recent.json');
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
-const RECENT_CAP = 20;
+const RECENT_CAP = 10;
 
 /* ---------------- 设置（规范 §3.4） ---------------- */
 const DEFAULT_SETTINGS = {
@@ -33,7 +33,12 @@ const DEFAULT_SETTINGS = {
   dlnaEnabled: true,
   dlnaFriendlyName: 'Aurora Player',
   bgCasting: false,         // 后台接收投屏（关窗不退应用）
+  lockPolicy: 'none',       // none | takeover | full（规格 §8：投屏期间本地控制权策略）
   libraryFolders: [],       // 媒体库文件夹
+  targetPeak: 0,            // HDR 高级调参：目标峰值 nits（0=自动）
+  targetContrast: 0,        // 对比度恢复（0=自动）
+  saturation: 0,            // 饱和度 -1..1
+  hdrPeakPercentile: 99.995,// 峰值检测百分位（高光恢复）
 };
 
 function readSettings() {
@@ -46,7 +51,6 @@ function writeSettings() {
 }
 
 let homeWin = null;
-let videoWin = null;
 let mpvProc = null;
 let currentPath = null;
 let casting = null;          // { cp, title } — DLNA 投屏会话标识
@@ -54,6 +58,29 @@ let dlnaProc = null;
 let dlnaState = { running: false, friendlyName: 'Aurora Player', port: 0 };
 let videoFs = false;         // 透明窗 isFullScreen() 回报不可靠，事件自行跟踪
 let quitting = false;        // 托盘/菜单退出标志（bgCasting 模式下区分关窗与退出）
+
+/* 规格 §8 控制权仲裁：本地 UI > 远程 CP；双向互抢（3s 内）→ Toast */
+let lastRemoteCmdAt = 0;
+let lastLocalCmdAt = 0;
+let lastToastAt = 0;
+function sendCastToast(text) {
+  if (homeWin && !homeWin.isDestroyed()) homeWin.webContents.send('cast:toast', text);
+}
+function maybeCastToast() {
+  if (!casting) return;
+  const now = Date.now();
+  if (now - lastToastAt < 3000) return;
+  lastToastAt = now;
+  sendCastToast(`正在由 ${casting.cp} 投放`);
+}
+function markRemote() {
+  lastRemoteCmdAt = Date.now();
+  if (lastLocalCmdAt && Date.now() - lastLocalCmdAt < 3000) maybeCastToast();
+}
+function markLocal() {
+  lastLocalCmdAt = Date.now();
+  if (lastRemoteCmdAt && Date.now() - lastRemoteCmdAt < 3000) maybeCastToast();
+}
 
 let pipe = null;
 let reqSeq = 0;
@@ -194,6 +221,8 @@ async function hdrEvaluate() {
     { gamma, primaries, sigPeak },
     { hdr: lastDisplayHdr },
     hdrOverride,
+    { targetPeak: settings.targetPeak, targetContrast: settings.targetContrast,
+      saturation: settings.saturation, hdrPeakPercentile: settings.hdrPeakPercentile },
   );
   for (const [k, v] of Object.entries(result.props)) {
     mpvCommand('set_property', k, v);
@@ -266,43 +295,53 @@ async function refreshMetadata() {
 }
 
 const pushStatus = (status) => {
-  if (videoWin && !videoWin.isDestroyed()) videoWin.webContents.send('mpv:status', status);
+  if (homeWin && !homeWin.isDestroyed()) homeWin.webContents.send('mpv:status', status);
 };
 const pushMeta = (meta) => {
-  if (videoWin && !videoWin.isDestroyed()) videoWin.webContents.send('mpv:meta', meta);
+  if (homeWin && !homeWin.isDestroyed()) homeWin.webContents.send('mpv:meta', meta);
 };
 
 /* ---------------- 状态轮询 → 推送到窗口 + DLNA 进程 ---------------- */
 
 function dlnaSendState() {
   if (!dlnaProc) return;
+  const volume = lastStatus.volume ?? 100;
+  const mute = lastStatus.mute === true;
   dlnaProc.postMessage({
     type: 'state',
     state: !currentPath ? 'NO_MEDIA_PRESENT' : (lastStatus.pause ? 'PAUSED_PLAYBACK' : 'PLAYING'),
     uri: currentPath, title: lastStatus.title,
     pos: lastStatus.timePos, dur: lastStatus.duration,
-    volume: lastStatus.volume, mute: lastStatus.mute,
+    volume, mute,
+    volumeChanged: lastSentVolume !== null && volume !== lastSentVolume,
+    muteChanged: lastSentMute !== null && mute !== lastSentMute,
+    eof: lastStatus.eof === true,
   });
+  lastSentVolume = volume;
+  lastSentMute = mute;
 }
 
-let lastStatus = { title: null, timePos: null, duration: null, pause: true, volume: 100, mute: false };
+let lastStatus = { title: null, timePos: null, duration: null, pause: true, volume: 100, mute: false, eof: false };
+let lastSentVolume = null;
+let lastSentMute = null;
 let thumbsStarted = false;
 
 function startStatusPolling() {
   if (statusTimer) return;
   statusTimer = setInterval(async () => {
-    const [title, timePos, duration, pause, volume, mute,
+    const [title, timePos, duration, pause, volume, mute, eof,
       codec, vw, vh, fps, vfFps, drops, hwdec, vo, vb, ab, cacheDur] = await Promise.all([
       mpvGet('media-title'), mpvGet('time-pos'), mpvGet('duration'),
       mpvGet('pause'), mpvGet('volume'), mpvGet('mute'),
+      mpvGet('eof-reached'),
       mpvGet('video-codec'), mpvGet('video-params/w'), mpvGet('video-params/h'),
       mpvGet('container-fps'), mpvGet('estimated-vf-fps'), mpvGet('frame-drop-count'),
       mpvGet('hwdec-current'), mpvGet('current-vo'),
       mpvGet('video-bitrate'), mpvGet('audio-bitrate'), mpvGet('demuxer-cache-duration'),
     ]);
-    lastStatus = { title, timePos, duration, pause, volume, mute };
+    lastStatus = { title, timePos, duration, pause, volume, mute, eof: eof === true };
     const stats = { codec, w: vw, h: vh, fps, vfFps, drops, hwdec, vo, vBitrate: vb, aBitrate: ab, cacheDur };
-    const status = { ...lastStatus, path: currentPath, casting, idle: !mpvProc, stats };
+    const status = { ...lastStatus, path: currentPath, casting, lockPolicy: settings.lockPolicy, idle: !mpvProc, stats };
     pushStatus(status);
     dlnaSendState();
     // 记录续播位置
@@ -341,54 +380,57 @@ function updateRecentPosition(file, timePos, duration) {
   writeRecent(list);
 }
 
-/* ---------------- 播放会话 ---------------- */
+/* ---------------- 播放会话（单窗：mpv 嵌入唯一主窗口，路由切换 home/player） ---------------- */
+
+/** 主进程 → 渲染层：切换 hash 路由（渲染层 hashchange 驱动 React 路由） */
+function goto(route) {
+  if (homeWin && !homeWin.isDestroyed()) homeWin.webContents.send('nav:goto', route);
+}
 
 function startPlayback(file, seek, castingInfo) {
-  stopPlayback();           // 先收掉旧会话
+  cleanupPlayback();          // 先收掉旧会话（不切路由，避免闪一下 home）
   currentPath = file;
   casting = castingInfo || null;  // DLNA 投屏会话（规格 §8：CASTING 徽标）
   addRecent(file);
 
-  // 单窗方案：透明 Electron 窗，React 控制层在上，mpv 子窗口在下层透出
-  videoWin = new BrowserWindow({
-    width: 1280, height: 760, minWidth: 640, minHeight: 400,
-    backgroundColor: '#00000000',
-    transparent: true,
-    title: 'Aurora Player',
-    autoHideMenuBar: true,
-    webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
-  });
-  videoWin.loadFile(DIST_HTML, { hash: '/player' });
-
-  videoWin.once('ready-to-show', () => {
-    const buf = videoWin.getNativeWindowHandle();
+  // 单窗：复用唯一主窗口（透明），mpv --wid 嵌入其 HWND 在下层透出
+  const doSpawn = () => {
+    const buf = homeWin.getNativeWindowHandle();
     const hwnd = Number(buf.length >= 8 ? buf.readBigUInt64LE(0) : buf.readUInt32LE(0));
     spawnMpv(hwnd, file, seek);
-  });
-
-  videoWin.on('enter-full-screen', () => { videoFs = true; });
-  videoWin.on('leave-full-screen', () => { videoFs = false; });
-
-  videoWin.on('closed', () => {
-    videoWin = null;
-    stopPlayback();
-  });
+  };
+  if (!homeWin || homeWin.isDestroyed()) {
+    // 冷启动（命令行带文件路径）：直接以播放路由加载，避免 nav:goto 与渲染层监听注册竞态
+    createHomeWindow('/player');
+    homeWin.once('ready-to-show', doSpawn);
+  } else {
+    homeWin.show();
+    doSpawn();
+    goto('player');
+  }
 }
 
-function stopPlayback() {
+function cleanupPlayback() {
   if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
   if (pipe && !pipe.destroyed) pipe.destroy();
   pipe = null;
   if (mpvProc) { mpvProc.kill(); mpvProc = null; }
   stopThumbs();
   thumbsStarted = false;
-  if (videoWin && !videoWin.isDestroyed()) videoWin.destroy();
-  videoWin = null;
   currentPath = null;
   casting = null;
   videoFs = false;
-  lastStatus = { title: null, timePos: null, duration: null, pause: true, volume: 100, mute: false };
+  lastStatus = { title: null, timePos: null, duration: null, pause: true, volume: 100, mute: false, eof: false };
+  lastSentVolume = null;
+  lastSentMute = null;
   dlnaSendState();
+}
+
+function stopPlayback() {
+  const wasFs = videoFs;
+  cleanupPlayback();
+  if (wasFs && homeWin && !homeWin.isDestroyed()) homeWin.setFullScreen(false);
+  goto('home');   // 返回首页
 }
 
 /* ---------------- 防火墙自检（规格 §9：缺失则添加，结果记日志） ---------------- */
@@ -447,12 +489,12 @@ function startDlna() {
     // 规格 §8 控制权仲裁：本地 UI > 远程 CP；CP 命令直接执行，状态经 LastChange 回推
     switch (m.cmd) {
       case 'load': startPlayback(m.uri, undefined, { cp: m.cp, title: m.title }); break;
-      case 'play': mpvCommand('set_property', 'pause', false); break;
-      case 'pause': mpvCommand('set_property', 'pause', true); break;
+      case 'play': markRemote(); mpvCommand('set_property', 'pause', false); break;
+      case 'pause': markRemote(); mpvCommand('set_property', 'pause', true); break;
       case 'stop': stopPlayback(); break;
-      case 'seek': mpvCommand('seek', m.seconds, 'absolute'); break;
-      case 'volume': mpvCommand('set_property', 'volume', m.value); break;
-      case 'mute': mpvCommand('set_property', 'mute', m.value); break;
+      case 'seek': markRemote(); mpvCommand('seek', m.seconds, 'absolute'); break;
+      case 'volume': markRemote(); mpvCommand('set_property', 'volume', m.value); break;
+      case 'mute': markRemote(); mpvCommand('set_property', 'mute', m.value); break;
     }
   });
   dlnaProc.on('exit', (code) => {
@@ -465,7 +507,7 @@ function startDlna() {
 /* ---------------- 打开文件流程（菜单/首页/托盘共用） ---------------- */
 
 async function openFileFlow() {
-  const target = videoWin && !videoWin.isDestroyed() ? videoWin : homeWin;
+  const target = homeWin && !homeWin.isDestroyed() ? homeWin : null;
   const { canceled, filePaths } = await dialog.showOpenDialog(target, {
     title: '打开视频文件',
     properties: ['openFile'],
@@ -673,7 +715,11 @@ function createTray() {
 
 /* ---------------- IPC ---------------- */
 
-ipcMain.handle('mpv:command', (_e, args) => mpvCommand(...args));
+ipcMain.handle('mpv:command', (_e, args) => {
+  // 投屏期间本地播放/进度/音量操作视为「本地接管」，用于互抢 Toast 判定（读属性不算）
+  if (casting && Array.isArray(args) && args[0] && !/^get_property$/.test(args[0])) markLocal();
+  return mpvCommand(...args);
+});
 
 ipcMain.handle('app:open-file', () => openFileFlow());
 
@@ -689,7 +735,9 @@ ipcMain.handle('settings:set', (_e, patch) => {
     && JSON.stringify(patch.libraryFolders) !== JSON.stringify(settings.libraryFolders);
   settings = { ...settings, ...patch };
   writeSettings();
-  if ('hdrMode' in patch || 'hdrAlgo' in patch) {
+  if ('hdrMode' in patch || 'hdrAlgo' in patch
+    || 'targetPeak' in patch || 'targetContrast' in patch
+    || 'saturation' in patch || 'hdrPeakPercentile' in patch) {
     hdrOverride = { mode: settings.hdrMode, algo: settings.hdrAlgo };
     if (currentPath) refreshMetadata();
   }
@@ -703,6 +751,13 @@ ipcMain.handle('settings:set', (_e, patch) => {
 
 /* 媒体库 */
 ipcMain.handle('library:list', () => library);
+ipcMain.handle('library:clear', () => {   // 清空条目（保留文件夹配置，重扫可重建）
+  library = [];
+  saveLibrary();
+  notifyLibrary();
+  return true;
+});
+ipcMain.handle('recent:clear', () => { writeRecent([]); return true; });
 ipcMain.handle('library:rescan', () => { scanLibrary(); return true; });
 ipcMain.handle('library:add-folder', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(homeWin, {
@@ -717,7 +772,7 @@ ipcMain.handle('library:add-folder', async () => {
   return settings.libraryFolders;
 });
 
-/* NAS/SMB：UNC 路径规范化 + 连接测试 + 入库（Windows 上 SMB = UNC，无需 smb 库） */
+/* NAS/SMB：UNC 路径规范化（Windows 上 SMB = UNC，无需 smb 库） */
 function normalizeUnc(input) {
   const s = String(input || '').trim().replace(/\//g, '\\').replace(/^\\+/, '');
   const parts = s.split('\\').filter(Boolean);
@@ -725,31 +780,32 @@ function normalizeUnc(input) {
   return '\\\\' + parts.join('\\');
 }
 
-ipcMain.handle('nas:add', async (_e, input) => {
-  const unc = normalizeUnc(input);
-  if (!unc) return { ok: false, error: '格式应为 \\\\服务器\\共享（如 \\\\NAS\\movies）' };
-  try {
-    fs.readdirSync(unc);
-  } catch (err) {
-    const needAuth = err.code === 'EACCES' || err.code === 'EPERM';
-    const msg = needAuth
-      ? '需要登录凭据：点"去登录"在资源管理器中输入账号密码后重试'
-      : (err.code === 'ENOENT' || err.code === 'ENOTFOUND')
-        ? '找不到该路径，检查服务器地址与共享名'
-        : `连接失败：${err.code || err.message}`;
-    return { ok: false, error: msg, unc, needAuth };
-  }
-  if (!settings.libraryFolders.includes(unc)) {
-    settings.libraryFolders = [...settings.libraryFolders, unc];
-    writeSettings();
-  }
-  scanLibrary();
-  return { ok: true, unc };
-});
-
 ipcMain.handle('nas:open-explorer', (_e, unc) => {
   const { shell } = require('electron');
   shell.openPath(unc);   // 触发 Windows 凭据登录框
+});
+
+/* NAS 在线浏览：列目录（文件夹 + 视频文件），用于在线选择播放，不扫描入库 */
+ipcMain.handle('nas:list', async (_e, input) => {
+  const unc = normalizeUnc(input);
+  if (!unc) return { ok: false, error: '路径无效' };
+  try {
+    const ents = fs.readdirSync(unc, { withFileTypes: true });
+    const entries = ents
+      .filter((e) => !e.name.startsWith('.') && !e.name.startsWith('$'))
+      .filter((e) => e.isDirectory() || VIDEO_EXTS.has(e.name.split('.').pop().toLowerCase()))
+      .map((e) => ({ name: e.name, path: unc + '\\' + e.name, isDir: e.isDirectory() }))
+      .sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name, 'zh-Hans-CN') : a.isDir ? -1 : 1));
+    return { ok: true, unc, entries };
+  } catch (err) {
+    const needAuth = err.code === 'EACCES' || err.code === 'EPERM';
+    return {
+      ok: false, unc, needAuth,
+      error: needAuth ? '需要登录凭据：点"去登录"在资源管理器中输入账号密码后重试'
+        : (err.code === 'ENOENT' || err.code === 'ENOTFOUND') ? '找不到该路径'
+        : `连接失败：${err.code || err.message}`,
+    };
+  }
 });
 ipcMain.handle('hdr:override', async (_e, o) => {
   hdrOverride = { mode: o?.mode || 'auto', algo: o?.algo || null };
@@ -770,8 +826,8 @@ ipcMain.handle('thumbs:nearest', (_e, time) => {
 
 /* 载入外部字幕（规范 §3.3 字幕页） */
 ipcMain.handle('sub:add', async () => {
-  if (!videoWin || videoWin.isDestroyed()) return;
-  const { canceled, filePaths } = await dialog.showOpenDialog(videoWin, {
+  if (!homeWin || homeWin.isDestroyed()) return;
+  const { canceled, filePaths } = await dialog.showOpenDialog(homeWin, {
     title: '载入外部字幕',
     properties: ['openFile'],
     filters: [
@@ -784,21 +840,21 @@ ipcMain.handle('sub:add', async () => {
   refreshMetadata();   // 新字幕轨进轨道列表
 });
 ipcMain.handle('app:toggle-fullscreen', () => {
-  if (videoWin && !videoWin.isDestroyed()) videoWin.setFullScreen(!videoFs);
+  if (homeWin && !homeWin.isDestroyed()) homeWin.setFullScreen(!videoFs);
 });
 
 /* 手动拖拽：透明窗在 Windows 上 -webkit-app-region:drag 失效（Electron 已知问题），
    改为渲染层报起止，主进程跟随光标语义移动（16ms 节流） */
 let dragTimer = null;
 ipcMain.on('win:drag-start', () => {
-  if (!videoWin || videoWin.isDestroyed() || videoWin.isFullScreen()) return;
+  if (!homeWin || homeWin.isDestroyed() || homeWin.isFullScreen()) return;
   const startCursor = screen.getCursorScreenPoint();
-  const [startX, startY] = videoWin.getPosition();
+  const [startX, startY] = homeWin.getPosition();
   clearInterval(dragTimer);
   dragTimer = setInterval(() => {
-    if (!videoWin || videoWin.isDestroyed()) return clearInterval(dragTimer);
+    if (!homeWin || homeWin.isDestroyed()) return clearInterval(dragTimer);
     const cur = screen.getCursorScreenPoint();
-    videoWin.setPosition(startX + cur.x - startCursor.x, startY + cur.y - startCursor.y);
+    homeWin.setPosition(startX + cur.x - startCursor.x, startY + cur.y - startCursor.y);
   }, 16);
 });
 ipcMain.on('win:drag-end', () => clearInterval(dragTimer));
@@ -806,12 +862,12 @@ ipcMain.on('win:drag-end', () => clearInterval(dragTimer));
 /* 手动边缘缩放：透明窗无原生边框，8 向热区 → 主进程按方向改 bounds（16ms 节流，最小 640×400） */
 let resizeTimer = null;
 ipcMain.on('win:resize-start', (_e, dir) => {
-  if (!videoWin || videoWin.isDestroyed() || videoWin.isFullScreen() || videoWin.isMaximized()) return;
+  if (!homeWin || homeWin.isDestroyed() || homeWin.isFullScreen() || homeWin.isMaximized()) return;
   const startCursor = screen.getCursorScreenPoint();
-  const b = videoWin.getBounds();
+  const b = homeWin.getBounds();
   clearInterval(resizeTimer);
   resizeTimer = setInterval(() => {
-    if (!videoWin || videoWin.isDestroyed()) return clearInterval(resizeTimer);
+    if (!homeWin || homeWin.isDestroyed()) return clearInterval(resizeTimer);
     const cur = screen.getCursorScreenPoint();
     const dx = cur.x - startCursor.x, dy = cur.y - startCursor.y;
     let { x, y, width, height } = b;
@@ -821,27 +877,38 @@ ipcMain.on('win:resize-start', (_e, dir) => {
     if (dir.includes('n')) { height = b.height - dy; y = b.y + dy; }
     if (width < 640) { if (dir.includes('w')) x += width - 640; width = 640; }
     if (height < 400) { if (dir.includes('n')) y += height - 400; height = 400; }
-    videoWin.setBounds({ x, y, width, height });
+    homeWin.setBounds({ x, y, width, height });
   }, 16);
 });
 ipcMain.on('win:resize-end', () => clearInterval(resizeTimer));
-ipcMain.on('win:minimize', () => { if (videoWin && !videoWin.isDestroyed()) videoWin.minimize(); });
+ipcMain.on('win:minimize', () => { if (homeWin && !homeWin.isDestroyed()) homeWin.minimize(); });
 ipcMain.on('win:maximize-toggle', () => {
-  if (!videoWin || videoWin.isDestroyed()) return;
-  if (videoWin.isMaximized()) videoWin.unmaximize(); else videoWin.maximize();
+  if (!homeWin || homeWin.isDestroyed()) return;
+  if (homeWin.isMaximized()) homeWin.unmaximize(); else homeWin.maximize();
 });
+ipcMain.on('win:close', () => { if (homeWin && !homeWin.isDestroyed()) homeWin.close(); });
 
 /* ---------------- 首页窗口 + 菜单 ---------------- */
 
-function createHomeWindow() {
+function createHomeWindow(hash = '/home') {
   homeWin = new BrowserWindow({
     width: 1280, height: 800, minWidth: 960, minHeight: 640,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#00000000',
+    transparent: true,
     title: 'Aurora Player',
     autoHideMenuBar: true,
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
   });
-  homeWin.loadFile(DIST_HTML, { hash: '/home' });
+  homeWin.loadFile(DIST_HTML, { hash });
+  homeWin.on('enter-full-screen', () => { videoFs = true; });
+  homeWin.on('leave-full-screen', () => { videoFs = false; });
+  // 渲染层 console → 文件日志（无头排障）
+  homeWin.webContents.on('console-message', (_e, _level, message) => {
+    try {
+      fs.appendFileSync(path.join(app.getPath('userData'), 'logs', 'renderer.log'),
+        `[${new Date().toISOString()}] ${message}\n`);
+    } catch {}
+  });
   homeWin.on('close', (e) => {
     // 后台接收投屏（规格 §9 待机模式）：关窗 → 隐藏到托盘，DLNA 保持可发现
     if (settings.bgCasting && !quitting) {
@@ -869,27 +936,36 @@ function buildMenu() {
   ]));
 }
 
-app.whenReady().then(() => {
-  if (!fs.existsSync(MPV_EXE)) {
-    dialog.showErrorBox('缺少 mpv 运行时', `未找到 ${MPV_EXE}`);
-    app.quit();
-    return;
-  }
-  settings = readSettings();   // app.getPath 需 ready 后可靠，磁盘读取在此进行
-  hdrOverride = { mode: settings.hdrMode, algo: settings.hdrAlgo };
-  buildMenu();
-  createTray();
-  startDlna();
-  if ((settings.libraryFolders || []).length) scanLibrary();
-  // 命令行带视频文件路径时直接播放（文件关联/拖放 exe 的基础）
-  const fileArg = process.argv.slice(2).find((a) => fs.existsSync(a) && fs.statSync(a).isFile());
-  if (fileArg) startPlayback(path.resolve(fileArg));
-  else createHomeWindow();
-});
+/* 单实例锁：多开会共享 userData 且互相抢 DLNA 端口/截图探针目标。
+   注意：init 必须整体收进 else 分支，否则二实例 app.quit() 后 whenReady 仍可能触发建窗 */
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => { showHome(); });
 
-app.on('before-quit', () => {
-  quitting = true;
-  stopPlayback();
-  if (dlnaProc) { dlnaProc.kill(); dlnaProc = null; }
-});
-app.on('window-all-closed', () => app.quit());
+  app.whenReady().then(() => {
+    if (!fs.existsSync(MPV_EXE)) {
+      dialog.showErrorBox('缺少 mpv 运行时', `未找到 ${MPV_EXE}`);
+      app.quit();
+      return;
+    }
+    settings = readSettings();   // app.getPath 需 ready 后可靠，磁盘读取在此进行
+    hdrOverride = { mode: settings.hdrMode, algo: settings.hdrAlgo };
+    buildMenu();
+    createTray();
+    startDlna();
+    if ((settings.libraryFolders || []).length) scanLibrary();
+    // 命令行带视频文件路径时直接播放（文件关联/拖放 exe 的基础）
+    const fileArg = process.argv.slice(2).find((a) => fs.existsSync(a) && fs.statSync(a).isFile());
+    if (fileArg) startPlayback(path.resolve(fileArg));
+    else createHomeWindow();
+  });
+
+  app.on('before-quit', () => {
+    quitting = true;
+    stopPlayback();
+    if (dlnaProc) { dlnaProc.kill(); dlnaProc = null; }
+  });
+  app.on('window-all-closed', () => app.quit());
+}

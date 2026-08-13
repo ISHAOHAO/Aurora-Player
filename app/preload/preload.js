@@ -17,13 +17,20 @@ contextBridge.exposeInMainWorld('aurora', {
   setSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
   getLibrary: () => ipcRenderer.invoke('library:list'),
   rescanLibrary: () => ipcRenderer.invoke('library:rescan'),
+  clearLibrary: () => ipcRenderer.invoke('library:clear'),
+  clearRecent: () => ipcRenderer.invoke('recent:clear'),
   addLibraryFolder: () => ipcRenderer.invoke('library:add-folder'),
-  addNasShare: (input) => ipcRenderer.invoke('nas:add', input),
+  listNas: (dir) => ipcRenderer.invoke('nas:list', dir),
   openNasExplorer: (unc) => ipcRenderer.invoke('nas:open-explorer', unc),
   onLibraryUpdated: (cb) => {
     const listener = (_e, items) => cb(items);
     ipcRenderer.on('library:updated', listener);
     return () => ipcRenderer.removeListener('library:updated', listener);
+  },
+  onNavigate: (cb) => {
+    const listener = (_e, route) => cb(route);
+    ipcRenderer.on('nav:goto', listener);
+    return () => ipcRenderer.removeListener('nav:goto', listener);
   },
   toggleFullscreen: () => ipcRenderer.invoke('app:toggle-fullscreen'),
   setHdrOverride: (o) => ipcRenderer.invoke('hdr:override', o),
@@ -35,6 +42,7 @@ contextBridge.exposeInMainWorld('aurora', {
   resizeEnd: () => ipcRenderer.send('win:resize-end'),
   minimizeWindow: () => ipcRenderer.send('win:minimize'),
   toggleMaximize: () => ipcRenderer.send('win:maximize-toggle'),
+  closeWindow: () => ipcRenderer.send('win:close'),
 
   onStatus: (cb) => {
     const listener = (_e, status) => cb(status);
@@ -46,5 +54,11 @@ contextBridge.exposeInMainWorld('aurora', {
     const listener = (_e, meta) => cb(meta);
     ipcRenderer.on('mpv:meta', listener);
     return () => ipcRenderer.removeListener('mpv:meta', listener);
+  },
+
+  onCastToast: (cb) => {
+    const listener = (_e, text) => cb(text);
+    ipcRenderer.on('cast:toast', listener);
+    return () => ipcRenderer.removeListener('cast:toast', listener);
   },
 });
