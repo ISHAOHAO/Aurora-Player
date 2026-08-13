@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Discussions 讨论区
+    url: https://github.com/ISHAOHAO/Aurora-Player/discussions
+    about: 提问、想法、使用问题等非 bug / feature 的讨论请到 Discussions

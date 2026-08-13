@@ -1,0 +1,5 @@
+# CODEOWNERS — 默认所有者
+# PR 改动这些路径时，GitHub 会自动请求下列 reviewer 评审
+# 当前为独立项目，所有者即仓库持有者
+
+* @ISHAOHAO
