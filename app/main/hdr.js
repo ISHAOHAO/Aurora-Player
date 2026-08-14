@@ -14,16 +14,24 @@
 
 const PQ_NAMES = ['pq', 'smpte2084', 'smpte2084(pq)'];
 const HLG_NAMES = ['hlg', 'arib-std-b67'];
+const DV_NAMES = ['dolbyvision', 'dovi', 'dolby-vision', 'dovi(pq)'];
+const HDR10PLUS_HINT = ['hdr10+', 'hdr10plus', 'st2094-40'];
 
 const TONE_ALGOS = ['spline', 'bt.2390', 'bt.2446a', 'hable', 'mobius', 'reinhard', 'clip'];
 const DEFAULT_ALGO = 'spline'; // libplacebo 推荐默认值（兼顾高光细节与亮度）
 
-/** transfer 名称归一 → 'PQ' | 'HLG' | null */
+/** transfer 名称归一 → 'PQ' | 'HLG' | 'DV' | null */
 function hdrKind(gamma) {
   const g = String(gamma || '').toLowerCase();
+  if (DV_NAMES.some((n) => g.includes(n))) return 'DV';
   if (PQ_NAMES.includes(g)) return 'PQ';
   if (HLG_NAMES.includes(g)) return 'HLG';
   return null;
+}
+
+/** HDR10+ 动态元数据：仅能通过文件名/容器标记 hint 推断（mpv 无运行时属性） */
+function isHdr10Plus(video) {
+  return HDR10PLUS_HINT.some((h) => String(video?.hdr10plus || video?.container || '').toLowerCase().includes(h));
 }
 
 /**
@@ -47,6 +55,8 @@ function decide(video, display, override = {}, tune = {}) {
     displayPeak: display.peak || null,
     algo,
     override: override.mode || 'auto',
+    hdr10plus: isHdr10Plus(video),   // D21：HDR10+ 动态元数据（容器标记推断）
+    dv: kind === 'DV',               // D21：Dolby Vision（transfer 识别）
   };
 
   // 高级调参 → mpv 属性（0/undefined = 不设置，走 mpv 自动）
@@ -70,11 +80,14 @@ function decide(video, display, override = {}, tune = {}) {
     return {
       ...base, mode: 'passthrough',
       reason: override.mode === 'passthrough'
-        ? `用户强制直通：${kind} 元数据随帧透传至 HDR 显示器`
-        : `HDR 片源(${kind}) + HDR 显示器，PQ/HLG 直通`,
+        ? `用户强制直通：${kind}${base.hdr10plus ? '（HDR10+）' : ''} 元数据随帧透传至 HDR 显示器`
+        : `HDR 片源(${kind}${base.dv ? '/Dolby Vision' : ''}${base.hdr10plus ? '+HDR10+' : ''}) + HDR 显示器，直通`,
       props: {
         'target-colorspace-hint': 'yes',
-        'hdr-compute-peak': 'no',
+        // auto：静态 HDR 元数据缺失（max-cll=0，网络"测试壁纸"视频通病）时
+        // mpv 自动启动态峰值检测；有元数据时等效 no（直通不检测）。
+        // 此前硬编码 no → 缺元数据视频用错误 sig-peak 处理 PQ 曲线 → 画质花斑。
+        'hdr-compute-peak': 'auto',
         ...tuneProps,
       },
     };
@@ -84,7 +97,7 @@ function decide(video, display, override = {}, tune = {}) {
     ...base, mode: 'tonemap',
     reason: override.mode === 'tonemap'
       ? `用户强制色调映射：${kind} → SDR（${algo}）`
-      : `HDR 片源(${kind}) 在 SDR 显示器上播放，色调映射（${algo}，感知色域映射）`,
+      : `HDR 片源(${kind}${base.dv ? '/Dolby Vision' : ''}${base.hdr10plus ? '+HDR10+' : ''}) 在 SDR 显示器上播放，色调映射（${algo}，感知色域映射）`,
     props: {
       'target-colorspace-hint': 'no',
       'tone-mapping': algo,
@@ -95,4 +108,4 @@ function decide(video, display, override = {}, tune = {}) {
   };
 }
 
-module.exports = { decide, hdrKind, TONE_ALGOS, DEFAULT_ALGO };
+module.exports = { decide, hdrKind, isHdr10Plus, TONE_ALGOS, DEFAULT_ALGO };

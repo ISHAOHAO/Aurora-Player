@@ -122,6 +122,20 @@ body.player { background: transparent; overflow: hidden; }
 
 button { font-family: inherit; color: inherit; background: none; border: none; cursor: pointer; }
 
+/* ---------- 可访问性（规范 §7；D30）：焦点环 + 高对比 + 减少动画 ---------- */
+:root[data-vmode]:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (prefers-contrast: more) {
+  :root { --hairline: rgba(128,128,128,.5); --text-muted: #999; }
+  :root[data-theme="light"] { --text-muted: #666; }
+}
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
 /* ---------- Glass 三级（仅浮层） ---------- */
 .glass-1 { background: var(--glass-1); backdrop-filter: blur(20px) saturate(1.2); -webkit-backdrop-filter: blur(20px) saturate(1.2); border: 1px solid var(--glass-border); }
 .glass-2 { background: var(--glass-2); backdrop-filter: blur(28px) saturate(1.3); -webkit-backdrop-filter: blur(28px) saturate(1.3); border: 1px solid rgba(255, 255, 255, .10); }
@@ -231,6 +245,31 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
 @keyframes ambient-drift { to { transform: translate3d(-3%, 2.5%, 0) scale(1.05); } }
 @media (prefers-reduced-motion: reduce) { .ambient-stage::before { animation: none; } }
 
+/* ---------- 视觉模式六态（规范 §5；D26） ---------- */
+/* Cinema（默认）：近纯黑 + 顶部微弱压暗 */
+:root[data-vmode="minimal"] .ambient-stage::before,
+:root[data-vmode="oled"] .ambient-stage::before { display: none; }
+:root[data-vmode="minimal"] .ambient-stage::after,
+:root[data-vmode="oled"] .ambient-stage::after { display: none; }
+:root[data-vmode="minimal"] .particles,
+:root[data-vmode="oled"] .particles { display: none; }
+/* OLED：纯黑 */
+:root[data-vmode="oled"] .ambient-stage { background: #000000; }
+:root[data-vmode="minimal"] .ambient-stage { background: #050505; }
+/* Aurora：主色光晕流动增强（亮度仍受限 ≤10%） */
+:root[data-vmode="aurora"] .ambient-stage::before {
+  background:
+    radial-gradient(50% 60% at 78% 15%, var(--ambient-1) 0%, transparent 70%),
+    radial-gradient(45% 55% at 10% 88%, var(--ambient-2) 0%, transparent 70%),
+    radial-gradient(35% 40% at 55% 40%, var(--ambient-1) 0%, transparent 65%);
+  opacity: 1;
+  animation-duration: 18s;
+}
+/* Glass：最大玻璃层次（页面元素加轻微玻璃感） */
+:root[data-vmode="glass"] .tile,
+:root[data-vmode="glass"] .poster .cover { box-shadow: 0 12px 40px rgba(0,0,0,.5), inset 0 0 0 1px var(--glass-border); }
+/* Custom：等同 Cinema 占位，供高级调参后续扩展 */
+
 /* ---------- 粒子尘光（沉浸式舞台，规范 §2.6；低速低透明，非装饰性发光） ---------- */
 .particles { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .particles::before, .particles::after {
@@ -287,6 +326,31 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
 .dlna-badge .dot.off { background: var(--text-muted); }
 .dlna-badge span { font-size: 12px; color: var(--text-secondary); }
 .topbar .spacer { margin-left: auto; }
+
+/* ---------- 全局搜索（规范 §3.1；D24） ---------- */
+.global-search {
+  display: flex; align-items: center; gap: 8px;
+  width: 300px; height: 34px; padding: 0 12px;
+  border-radius: 999px; background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  color: var(--text-secondary);
+}
+.global-search svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--text-muted); }
+.global-search input {
+  flex: 1; min-width: 0; height: 100%;
+  background: none; border: none; outline: none;
+  color: var(--text-primary); font-size: 13px; font-family: inherit;
+}
+.global-search input::placeholder { color: var(--text-muted); }
+.global-search:focus-within { border-color: var(--accent); }
+.global-search .clear {
+  flex-shrink: 0; width: 20px; height: 20px; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; color: var(--text-muted);
+  background: var(--surface-hover);
+}
+.global-search .clear:hover { color: var(--text-primary); }
+.search-results { margin-bottom: 36px; }
 
 .hero { display: flex; gap: 32px; align-items: flex-end; margin-bottom: 36px; }
 .hero-card {
@@ -411,9 +475,9 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
 .drag-strip {
   position: absolute; top: 0; left: 0; right: 0; height: 14px; z-index: 30;
 }
-/* 8 向边缘缩放热区（透明窗无原生边框；DWM 隐形边框会吃掉外侧 ~7px，热区内扩至 10px） */
+/* 8 向边缘缩放热区（透明窗无原生边框；DWM 隐形边框会吃掉外侧 ~7px，热区内扩至 10px）
+   注意：顶部中间无缩放热区（rz-n 已移除）——顶部留给拖拽条，避免拖动误触发向上缩放 */
 .rz { position: fixed; z-index: 40; }
-.rz-n { top: 0; left: 16px; right: 16px; height: 10px; cursor: ns-resize; }
 .rz-s { bottom: 0; left: 16px; right: 16px; height: 10px; cursor: ns-resize; }
 .rz-e { right: 0; top: 16px; bottom: 16px; width: 10px; cursor: ew-resize; }
 .rz-w { left: 0; top: 16px; bottom: 16px; width: 10px; cursor: ew-resize; }
@@ -422,19 +486,31 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
 .rz-se { bottom: 0; right: 0; width: 16px; height: 16px; cursor: nwse-resize; }
 .rz-sw { bottom: 0; left: 0; width: 16px; height: 16px; cursor: nesw-resize; }
 
-/* 顶部信息条 */
+/* 顶部信息条：仅标题+规格摘要+CASTING，轻渐变不再大面积压暗画面 */
 .top-info {
   position: absolute; top: 0; left: 0; right: 0;
-  display: flex; align-items: center; gap: 14px;
-  padding: 18px 32px 40px;
-  background: linear-gradient(180deg, var(--ov-topgrad) 0%, transparent 100%);
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 96px 20px 24px;   /* 右侧留出窗口按钮区，避免重叠 */
+  background: linear-gradient(180deg, rgba(0, 0, 0, .28) 0%, transparent 100%);
   transition: opacity var(--dur-fast) var(--ease-out);
 }
 .top-info .title { font-size: 15px; font-weight: 600; color: var(--ov-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.top-info .spacer { flex: 1; }
+.top-info .spec-summary {
+  font-size: 12px; color: var(--ov-text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0;
+}
 .top-info .icon-btn { color: var(--ov-icon); }
 .top-info .icon-btn:hover { background: var(--ov-hover-bg); color: var(--ov-text); }
+
+/* 窗口控制按钮：右上角悬浮，窗口模式常驻（不随 idle 淡出），全屏隐藏 */
+.win-float {
+  position: absolute; top: 10px; right: 12px;
+  display: flex; align-items: center; gap: 2px;
+  z-index: 35;
+}
+.win-float .icon-btn { color: var(--ov-icon); }
+.win-float .icon-btn:hover { background: var(--ov-hover-bg); color: var(--ov-text); }
 
 /* 底部控制层 */
 .control-deck {
@@ -520,7 +596,16 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
 .pop-menu .mi .tag { margin-left: auto; font-size: 11px; color: var(--ov-dim); }
 .pop-menu .mi.on .tag { color: var(--accent); }
 .pop-menu .sep { height: 1px; margin: 4px 8px; background: var(--ov-sep); }
-.pop-menu .head { padding: 6px 12px; font-size: 11px; color: var(--ov-dim); }
+.pop-menu .head { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 11px; color: var(--ov-dim); }
+.pop-menu .head span { flex: 1; }
+.menu-close {
+  width: 22px; height: 22px; flex-shrink: 0; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--ov-icon);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.menu-close:hover { background: var(--ov-hover-bg); color: var(--ov-text); }
+.menu-close svg { width: 12px; height: 12px; }
 
 /* ---------- 进度条：章节标记 + 悬停气泡 ---------- */
 .chapter-dot {
@@ -585,15 +670,6 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
 .info-grid > span:nth-child(even) { color: var(--ov-text); }
 .info-grid .reason { color: var(--ov-text-2); line-height: 1.5; }
 
-/* 播放页：HDR 状态标签（中性描边，规范 v1.1 禁令兼容） */
-.hdr-tag {
-  height: 22px; padding: 0 8px; flex-shrink: 0;
-  display: inline-flex; align-items: center;
-  border-radius: 6px; font-size: 11px; font-weight: 600;
-  color: var(--ov-icon);
-  border: 1px solid var(--ov-btn-border);
-}
-
 /* ---------- 投屏互抢 Toast（规格 §8） ---------- */
 .cast-toast {
   position: fixed; left: 50%; top: 76px; transform: translateX(-50%);
@@ -612,6 +688,16 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
 .tune-row { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--ov-text-2); }
 .tune-row input[type="range"] { flex: 1; accent-color: var(--accent); }
 .tune-row .val { min-width: 64px; text-align: right; color: var(--ov-text); }
+
+/* ---------- 控制台：均衡器（D33） ---------- */
+.eq { display: flex; gap: 4px; height: 90px; align-items: stretch; }
+.eq-band { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
+.eq-band input[type="range"] {
+  writing-mode: vertical-lr; direction: rtl;
+  width: 90px; height: 60px; flex: 1;
+  accent-color: var(--accent);
+}
+.eq-band .eq-label { font-size: 9px; color: var(--ov-dim); }
 
 /* ---------- 首页：URL 弹窗 ---------- */
 .url-modal-mask {
@@ -689,11 +775,21 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
   display: flex; align-items: center; justify-content: center;
 }
 .err-card {
+  position: relative;
   width: 480px; max-width: calc(100vw - 96px);
   border-radius: var(--radius-panel); padding: 24px;
   color: var(--ov-text);
   box-shadow: 0 24px 64px rgba(0, 0, 0, .55);
 }
+.err-close {
+  position: absolute; top: 14px; right: 14px;
+  width: 32px; height: 32px; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--ov-icon);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.err-close:hover { background: var(--ov-hover-bg); color: var(--ov-text); }
+.err-close svg { width: 16px; height: 16px; }
 .err-title {
   display: flex; align-items: center; gap: 10px;
   font-size: 17px; font-weight: 600; margin-bottom: 18px;

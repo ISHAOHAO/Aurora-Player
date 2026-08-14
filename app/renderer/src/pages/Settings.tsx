@@ -32,10 +32,17 @@ function applyTheme(theme: Settings['theme']) {
 export default function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
   const [group, setGroup] = useState<Group>('play');
+  const [shaderFiles, setShaderFiles] = useState<string[]>([]);
+  const [shaderMsg, setShaderMsg] = useState<string | null>(null);
 
   useWindowDragRelease();
 
-  useEffect(() => { window.aurora.getSettings().then(setS); }, []);
+  useEffect(() => {
+    window.aurora.getSettings().then((st) => {
+      setS(st);
+      if (st.shaderDir) window.aurora.shaderList().then(setShaderFiles);
+    });
+  }, []);
 
   const patch = async (p: Partial<Settings>) => {
     const next = await window.aurora.setSettings(p);
@@ -99,14 +106,79 @@ export default function SettingsPage() {
                 ))}
               </div>
             </div>
+            <div className="srow">
+              <span>用户 Shader<small>（.glsl/.hook，静态校验禁 IO）</small></span>
+              <button className="seg-action" onClick={async () => {
+                const r = await window.aurora.shaderSetDir();
+                if (r && 'error' in r) { setShaderMsg(r.error); return; }
+                if (r && 'dir' in r) { setS((p) => ({ ...p!, shaderDir: r.dir, shaders: [] })); setShaderMsg(`发现 ${r.files.length} 个 Shader`); setShaderFiles(r.files); }
+              }}>{s.shaderDir ? '更换目录…' : '选择目录…'}</button>
+            </div>
+            {s.shaderDir && (
+              <div className="srow">
+                <span>已启用 Shader<small>{s.shaders.length} / {shaderFiles.length || '?'}</small></span>
+                <div className="seg">
+                  {(shaderFiles.length ? shaderFiles : s.shaders).map((f) => (
+                    <button key={f} className={s.shaders.includes(f) ? 'on' : ''}
+                      onClick={async () => {
+                        const next = s.shaders.includes(f) ? s.shaders.filter((x) => x !== f) : [...s.shaders, f];
+                        const r = await window.aurora.shaderApply(next);
+                        setS(await window.aurora.getSettings());
+                        if (r && !r.ok) setShaderMsg(`已拦截：${r.bad.map((b) => `${b.file}(${b.forbidden.join(',')})`).join('; ')}`);
+                        else setShaderMsg(null);
+                      }}>{f}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {shaderMsg && <div className="srow"><span className="val">{shaderMsg}</span></div>}
           </>
         )}
         {group === 'audio' && (
-          <div className="srow">
-            <span>默认音量<span className="val timecode"> {s.defaultVolume}%</span></span>
-            <input type="range" min={30} max={100} value={s.defaultVolume}
-              onChange={(e) => patch({ defaultVolume: +e.target.value })} />
-          </div>
+          <>
+            <div className="srow">
+              <span>默认音量<span className="val timecode"> {s.defaultVolume}%</span></span>
+              <input type="range" min={30} max={100} value={s.defaultVolume}
+                onChange={(e) => patch({ defaultVolume: +e.target.value })} />
+            </div>
+            <div className="srow">
+              <span>增益<span className="val timecode"> {s.audioGain > 0 ? '+' : ''}{s.audioGain} dB</span></span>
+              <input type="range" min={-60} max={30} value={s.audioGain}
+                onChange={(e) => patch({ audioGain: +e.target.value })} />
+            </div>
+            <div className="srow">
+              <span>ReplayGain</span>
+              <div className="seg">
+                {[['off', '关闭'], ['track', '单曲'], ['album', '专辑']].map(([v, l]) => (
+                  <button key={v} className={s.replayGain === v ? 'on' : ''} onClick={() => patch({ replayGain: v as Settings['replayGain'] })}>{l}</button>
+                ))}
+              </div>
+            </div>
+            <div className="srow">
+              <span>动态归一化<small>（dynaudnorm）</small></span>
+              <button className={`switch${s.audioNormalize ? ' on' : ''}`} onClick={() => patch({ audioNormalize: !s.audioNormalize })} />
+            </div>
+            <div className="srow">
+              <span>声道映射</span>
+              <div className="seg">
+                {[['auto-safe', '自动'], ['stereo', '立体声'], ['5.1', '5.1'], ['7.1', '7.1']].map(([v, l]) => (
+                  <button key={v} className={s.audioChannels === v ? 'on' : ''} onClick={() => patch({ audioChannels: v })}>{l}</button>
+                ))}
+              </div>
+            </div>
+            <div className="srow">
+              <span>WASAPI 独占<small>（自动采样率切换，设备占用时回退）</small></span>
+              <button className={`switch${s.audioExclusive ? ' on' : ''}`} onClick={() => patch({ audioExclusive: !s.audioExclusive })} />
+            </div>
+            <div className="srow">
+              <span>Bitstream 透传<small>（SPDIF/HDMI）</small></span>
+              <div className="seg">
+                {[['none', '关闭'], ['ac3', 'AC-3'], ['eac3', 'E-AC-3'], ['dts', 'DTS'], ['dts-hd', 'DTS-HD'], ['true-hd', 'TrueHD']].map(([v, l]) => (
+                  <button key={v} className={s.audioBitstream === v ? 'on' : ''} onClick={() => patch({ audioBitstream: v })}>{l}</button>
+                ))}
+              </div>
+            </div>
+          </>
         )}
         {group === 'sub' && (
           <div className="srow">
@@ -166,14 +238,25 @@ export default function SettingsPage() {
           </>
         )}
         {group === 'ui' && (
-          <div className="srow">
-            <span>主题</span>
-            <div className="seg">
-              {[['auto', '跟随系统'], ['light', '浅色'], ['dark', '暗色']].map(([v, l]) => (
-                <button key={v} className={s.theme === v ? 'on' : ''} onClick={() => patch({ theme: v as Settings['theme'] })}>{l}</button>
-              ))}
+          <>
+            <div className="srow">
+              <span>主题</span>
+              <div className="seg">
+                {[['auto', '跟随系统'], ['light', '浅色'], ['dark', '暗色']].map(([v, l]) => (
+                  <button key={v} className={s.theme === v ? 'on' : ''} onClick={() => patch({ theme: v as Settings['theme'] })}>{l}</button>
+                ))}
+              </div>
             </div>
-          </div>
+            <div className="srow">
+              <span>视觉模式<small>（规范 §5 六态）</small></span>
+              <div className="seg">
+                {[['cinema', '影院'], ['aurora', '极光'], ['minimal', '极简'], ['glass', '玻璃'], ['oled', 'OLED'], ['custom', '自定义']].map(([v, l]) => (
+                  <button key={v} className={s.visualMode === v ? 'on' : ''}
+                    onClick={() => { patch({ visualMode: v as Settings['visualMode'] }); document.documentElement.dataset.vmode = v; }}>{l}</button>
+                ))}
+              </div>
+            </div>
+          </>
         )}
         </div>
       </div>

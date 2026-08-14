@@ -16,6 +16,19 @@ function trackLabel(t: Track): string {
   return parts.length ? parts.join(' · ') : `#${t.id}`;
 }
 
+/** 规格摘要纯文本（规范 §3.2 + §2.1 禁令：禁胶囊标签，用 · 分隔） */
+function specSummary(meta: PlayerMeta | null, status: PlayerStatus | null): string {
+  const parts: string[] = [];
+  const s = status?.stats;
+  if (s?.codec) parts.push(s.codec.toUpperCase());
+  if (s?.w && s?.h) parts.push(s.w >= 3840 ? '4K' : s.h >= 1080 ? '1080p' : s.h >= 720 ? '720p' : `${s.w}×${s.h}`);
+  if (meta?.hdr?.videoHdr) {
+    parts.push(meta.hdr.kind === 'HLG' ? 'HLG' : meta.hdr.dv || meta.hdr.kind === 'DV' ? 'Dolby Vision' : meta.hdr.hdr10plus ? 'HDR10+' : 'HDR10');
+  }
+  if (s?.fps) parts.push(`${Math.round(s.fps)}fps`);
+  return parts.join(' · ');
+}
+
 /* ================= 轨道菜单 ================= */
 function TrackMenu({ title, tracks, onPick, onClose, allowOff }: {
   title: string; tracks: Track[]; allowOff?: boolean;
@@ -23,7 +36,12 @@ function TrackMenu({ title, tracks, onPick, onClose, allowOff }: {
 }) {
   return (
     <div className="pop-menu glass-2" onClick={(e) => e.stopPropagation()}>
-      <div className="head">{title}</div>
+      <div className="head">
+        <span>{title}</span>
+        <button className="menu-close" title="关闭" onClick={onClose}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
       {allowOff && (
         <button className={`mi${tracks.every((t) => !t.selected) ? ' on' : ''}`} onClick={() => { onPick('no'); onClose(); }}>
           关闭
@@ -45,6 +63,7 @@ type Tab = 'basic' | 'video' | 'audio' | 'sub' | 'adv';
 
 const HDR_MODE_LABEL = { passthrough: '直通', tonemap: '色调映射', sdr: '原生 SDR' } as const;
 const TONE_ALGOS = ['spline', 'bt.2390', 'bt.2446a', 'hable', 'mobius', 'reinhard', 'clip'];
+const EQ_FREQS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 
 function ConsoleDrawer({ meta, status, onLocalMeta, onClose }: {
   meta: PlayerMeta | null;
@@ -61,6 +80,7 @@ function ConsoleDrawer({ meta, status, onLocalMeta, onClose }: {
   const [flip, setFlip] = useState({ h: false, v: false });
   const [bilingual, setBilingual] = useState(false);
   const [secondarySid, setSecondarySid] = useState<number | null>(null);
+  const [eq, setEq] = useState<number[]>(Array(10).fill(0));
   const [tune, setTune] = useState({ targetPeak: 0, targetContrast: 0, saturation: 0, hdrPeakPercentile: 99.995 });
 
   useEffect(() => {
@@ -83,18 +103,31 @@ function ConsoleDrawer({ meta, status, onLocalMeta, onClose }: {
         setFlip({ h: names.includes('hflip'), v: names.includes('vflip') });
       }
     })();
-    window.aurora.getSettings().then((s) => setTune({
-      targetPeak: s.targetPeak ?? 0,
-      targetContrast: s.targetContrast ?? 0,
-      saturation: s.saturation ?? 0,
-      hdrPeakPercentile: s.hdrPeakPercentile ?? 99.995,
-    }));
+    window.aurora.getSettings().then((s) => {
+      setTune({
+        targetPeak: s.targetPeak ?? 0,
+        targetContrast: s.targetContrast ?? 0,
+        saturation: s.saturation ?? 0,
+        hdrPeakPercentile: s.hdrPeakPercentile ?? 99.995,
+      });
+      if (Array.isArray(s.audioEq)) setEq(s.audioEq);
+    });
   }, []);
 
   // D23 高级调参：改值即写 settings（主进程据此重跑决策链，实时生效）
   const tuneSet = (k: keyof typeof tune, v: number) => {
     setTune((t) => ({ ...t, [k]: v }));
     window.aurora.setSettings({ [k]: v });
+  };
+
+  // D33 EQ：改值即写 settings（主进程 applyAudioSettings 实时生效）
+  const eqSet = (i: number, v: number) => {
+    setEq((arr) => {
+      const next = arr.slice();
+      next[i] = v;
+      window.aurora.setSettings({ audioEq: next });
+      return next;
+    });
   };
 
   const set = (prop: string, v: unknown) => window.aurora.mpv('set_property', prop, v);
@@ -227,6 +260,20 @@ function ConsoleDrawer({ meta, status, onLocalMeta, onClose }: {
                 <button onClick={() => { const v = +(audioDelay - 0.1).toFixed(1); setAudioDelay(v); set('audio-delay', v); }}>−</button>
                 <span className="v timecode">{audioDelay.toFixed(1)}s</span>
                 <button onClick={() => { const v = +(audioDelay + 0.1).toFixed(1); setAudioDelay(v); set('audio-delay', v); }}>+</button>
+              </div>
+            </div>
+            <div className="row">
+              <label>均衡器<span className="val">（10 段，双击归零）</span></label>
+              <div className="eq">
+                {EQ_FREQS.map((f, i) => (
+                  <div className="eq-band" key={f}>
+                    <input type="range" min={-12} max={12} step={1}
+                      value={eq[i]}
+                      onDoubleClick={() => eqSet(i, 0)}
+                      onChange={(e) => eqSet(i, +e.target.value)} />
+                    <span className="eq-label">{f >= 1000 ? `${f / 1000}k` : f}</span>
+                  </div>
+                ))}
               </div>
             </div>
           </>
@@ -369,12 +416,14 @@ export default function Player() {
   const [toast, setToast] = useState<string | null>(null);
   const [playErr, setPlayErr] = useState<PlayError | null>(null);
   const [errDetail, setErrDetail] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => window.aurora.onStatus(setStatus), []);
   useEffect(() => window.aurora.onMeta(setMeta), []);
+  useEffect(() => window.aurora.onFullscreen(setFullscreen), []);
   useEffect(() => window.aurora.onPlayError((e) => {
     setPlayErr(e);
     setErrDetail(false);
@@ -469,6 +518,38 @@ export default function Player() {
     }
   };
 
+  /* ----- 触控交互（规范 §7；D29）：Tap=播放/暂停、Double Tap=全屏、左右 Swipe=±10s、右侧上下 Swipe=音量 ----- */
+  const touchStart = useRef<{ x: number; y: number; t: number } | null>(null);
+  const touchTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    touchStart.current = { x: t.clientX, y: t.clientY, t: Date.now() };
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const s = touchStart.current;
+    touchStart.current = null;
+    if (!s) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - s.x, dy = t.clientY - s.y;
+    const dt = Date.now() - s.t;
+    const adx = Math.abs(dx), ady = Math.abs(dy);
+    // Swipe（位移 > 40px 且时长 < 800ms）
+    if (Math.max(adx, ady) > 40 && dt < 800) {
+      if (adx > ady) { if (!playLocked) window.aurora.mpv('seek', dx > 0 ? 10 : -10); }
+      else if (s.x > window.innerWidth * 0.6 && !volLocked) { window.aurora.mpv('add', 'volume', dy < 0 ? 5 : -5); }
+      return;
+    }
+    // Tap / Double Tap
+    if (playLocked) return;
+    if (touchTapTimer.current) {
+      clearTimeout(touchTapTimer.current);
+      touchTapTimer.current = null;
+      window.aurora.toggleFullscreen();   // double tap
+    } else {
+      touchTapTimer.current = setTimeout(() => { touchTapTimer.current = null; window.aurora.mpv('cycle', 'pause'); }, 300);
+    }
+  };
+
   /* ----- 进度条 ----- */
   const dur = status?.duration ?? 0;
   const seekFromEvent = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -519,7 +600,7 @@ export default function Player() {
     if ((e.target as HTMLElement).closest('button')) return;
     window.aurora.dragStart();
   };
-  const RESIZE_DIRS = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+  const RESIZE_DIRS = ['s', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
   const onResizeMouseDown = (dir: string) => (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -532,6 +613,8 @@ export default function Player() {
       onClick={onVideoClick}
       onWheel={(e) => { if (!volLocked) window.aurora.mpv('add', 'volume', e.deltaY < 0 ? volStep.current : -volStep.current); }}
       onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
     >
       {/* 顶部拖拽条：拖动移窗，双击全屏；阻断单击穿透到播放暂停 */}
       <div className="drag-strip"
@@ -545,7 +628,7 @@ export default function Player() {
         <div key={d} className={`rz rz-${d}`} onMouseDown={onResizeMouseDown(d)} />
       ))}
 
-      {/* 顶部信息条 */}
+      {/* 顶部信息条：仅标题 + 规格摘要 + CASTING 徽标（随 idle 淡出） */}
       <div className="top-info" onMouseDown={onDragMouseDown} onClick={(e) => e.stopPropagation()}>
         {status?.casting && (
           <div className="casting-badge glass-1">
@@ -560,22 +643,23 @@ export default function Player() {
           </div>
         )}
         <div className="title">{status?.title || '加载中…'}</div>
-        {meta?.hdr?.videoHdr && (
-          <span className="hdr-tag">
-            {meta.hdr.kind === 'HLG' ? 'HLG' : 'HDR10'}{meta.hdr.mode === 'passthrough' ? ' · 直通' : meta.hdr.mode === 'tonemap' ? ' · 映射' : ''}
-          </span>
-        )}
-        <div className="spacer" />
-        <button className="icon-btn" title="最小化" onClick={(e) => { e.stopPropagation(); window.aurora.minimizeWindow(); }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M5 12h14"/></svg>
-        </button>
-        <button className="icon-btn" title="最大化/还原" onClick={(e) => { e.stopPropagation(); window.aurora.toggleMaximize(); }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
-        </button>
-        <button className="icon-btn" title="返回首页" onClick={(e) => { e.stopPropagation(); window.aurora.stop(); }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 11l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10"/></svg>
-        </button>
+        {specSummary(meta, status) && <span className="spec-summary">{specSummary(meta, status)}</span>}
       </div>
+
+      {/* 窗口控制按钮（右上角悬浮，窗口模式常驻、全屏隐藏） */}
+      {!fullscreen && (
+        <div className="win-float" onClick={(e) => e.stopPropagation()}>
+          <button className="icon-btn" title="最小化" onClick={() => window.aurora.minimizeWindow()}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M5 12h14"/></svg>
+          </button>
+          <button className="icon-btn" title="最大化/还原" onClick={() => window.aurora.toggleMaximize()}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+          </button>
+          <button className="icon-btn" title="返回首页" onClick={() => window.aurora.stop()}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 11l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10"/></svg>
+          </button>
+        </div>
+      )}
 
       {/* 底部控制层 */}
       <div className="control-deck glass-1" onClick={(e) => e.stopPropagation()}>
@@ -597,7 +681,7 @@ export default function Player() {
         </div>
 
         <div className="controls-row">
-          <button className="primary-btn" title={playLocked ? '投屏接管中' : '播放/暂停 (空格)'} disabled={playLocked} onClick={() => window.aurora.mpv('cycle', 'pause')}>
+          <button className="primary-btn" aria-label={paused ? '播放' : '暂停'} title={playLocked ? '投屏接管中' : '播放/暂停 (空格)'} disabled={playLocked} onClick={() => window.aurora.mpv('cycle', 'pause')}>
             {paused ? (
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v13.72c0 .8.87 1.3 1.56.88l11-6.86a1.03 1.03 0 0 0 0-1.76l-11-6.86A1.03 1.03 0 0 0 8 5.14z"/></svg>
             ) : (
@@ -653,6 +737,12 @@ export default function Player() {
       {ctxMenu && (
         <div className="pop-menu glass-2" style={{ left: ctxMenu.x, top: ctxMenu.y, bottom: 'auto', right: 'auto', position: 'fixed' }}
           onClick={(e) => e.stopPropagation()}>
+          <div className="head">
+            <span>播放器</span>
+            <button className="menu-close" title="关闭" onClick={() => setCtxMenu(null)}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
           <button className="mi" onClick={() => { window.aurora.mpv('cycle', 'pause'); setCtxMenu(null); }}>{paused ? '播放' : '暂停'}</button>
           <button className="mi" onClick={() => { window.aurora.toggleFullscreen(); setCtxMenu(null); }}>全屏</button>
           <div className="sep" />
@@ -670,6 +760,9 @@ export default function Player() {
       {playErr && (
         <div className="err-mask" onClick={(e) => e.stopPropagation()}>
           <div className="err-card glass-3">
+            <button className="err-close" title="关闭" onClick={() => window.aurora.stop()}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
             <div className="err-title">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 8v5M12 16.5h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
               无法播放该文件
@@ -682,6 +775,7 @@ export default function Player() {
               <button onClick={() => setErrDetail(!errDetail)}>{errDetail ? '收起详情' : '查看详情'}</button>
               <button onClick={() => { window.aurora.exportLog().then((p) => showToast(p ? `已导出日志：${p}` : '导出取消')); }}>导出日志</button>
               <button onClick={() => { setPlayErr(null); window.aurora.retryPlayback(false); }}>重试</button>
+              <button onClick={() => window.aurora.stop()}>关闭并返回首页</button>
             </div>
             {errDetail && (
               <div className="err-detail">

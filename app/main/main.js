@@ -11,6 +11,7 @@ const net = require('net');
 const path = require('path');
 const fs = require('fs');
 const { decide } = require('./hdr');
+const db = require('./db');
 
 const MPV_EXE = path.join(__dirname, '..', '..', 'runtime', 'mpv', 'mpv.exe');
 const PIPE_PATH = '\\\\.\\pipe\\aurora-mpv';
@@ -28,6 +29,13 @@ const DEFAULT_SETTINGS = {
   volumeStep: 2,            // 滚轮步进
   defaultVolume: 100,
   subFontSize: 34,
+  audioGain: 0,             // 增益 -60..+30 dB（D33）
+  audioEq: null,            // 10 段 EQ 数组 [-12..+12]，null=关闭（D33）
+  replayGain: 'off',        // off | track | album（D33）
+  audioNormalize: false,    // dynaudnorm 动态归一化（D33）
+  audioChannels: 'auto-safe', // 声道映射 auto-safe/stereo/5.1/7.1（D33）
+  audioExclusive: false,    // WASAPI 独占（D33）
+  audioBitstream: 'none',   // SPDIF 透传 none/ac3/eac3/dts/dtshd/truehd（D33）
   hdrMode: 'auto',          // auto | passthrough | tonemap
   hdrAlgo: 'spline',
   dlnaEnabled: true,
@@ -39,6 +47,9 @@ const DEFAULT_SETTINGS = {
   targetContrast: 0,        // 对比度恢复（0=自动）
   saturation: 0,            // 饱和度 -1..1
   hdrPeakPercentile: 99.995,// 峰值检测百分位（高光恢复）
+  visualMode: 'cinema',      // 视觉模式六态（规范 §5）：cinema/aurora/minimal/glass/oled/custom（D26）
+  shaderDir: '',             // 用户 Shader 目录（D32；空 = 不启用）
+  shaders: [],               // 已启用的 .glsl/.hook 列表（D32）
 };
 
 function readSettings() {
@@ -90,6 +101,7 @@ let vrTimer = null;
 let hdrRetry = 0;
 let forceSoftwareDecode = false;   // D25 错误卡片「切换软件解码」
 let loadPending = false;           // D25：载入请求未确认（file-loaded 前为 true）
+let perfDegrade = { tier: 0, since: 0, notified: false };   // D34 自动性能降级
 
 /* ---------------- mpv 进程 ---------------- */
 
@@ -149,6 +161,8 @@ function connectPipe(retriesLeft) {
         // 应用设置默认值（每新文件一次）
         mpvCommand('set_property', 'volume', settings.defaultVolume);
         mpvCommand('set_property', 'sub-font-size', settings.subFontSize);
+        applyAudioSettings();
+        applyShaders();
         refreshMetadata();
       } else if (msg.event === 'video-reconfig') {
         // 视频参数就绪/变化（解码器重初始化后 video-params 才可用）→ 重跑决策链（去抖）
@@ -283,7 +297,59 @@ function stopThumbs() {
   thumbs = null;
 }
 
+/* 用户 Shader（D32）：.glsl/.hook 加载 + 静态校验（禁止文件/网络 IO 内置函数） */
+const SHADER_FORBIDDEN = ['texture(', 'sample(', 'ImageLoad', 'gl_FragCoord', 'fopen', 'read(', 'write(', 'load(', 'store('];
+
+function validateShader(content) {
+  const forbidden = [];
+  for (const tok of SHADER_FORBIDDEN) {
+    if (content.includes(tok)) forbidden.push(tok);
+  }
+  return { ok: forbidden.length === 0, forbidden };
+}
+
+function listShaders(dir) {
+  try {
+    if (!dir || !fs.existsSync(dir)) return [];
+    return fs.readdirSync(dir).filter((f) => /\.(glsl|hook)$/i.test(f));
+  } catch { return []; }
+}
+
+function applyShaders() {
+  if (!settings.shaderDir || !settings.shaders.length) {
+    mpvCommand('set_property', 'glsl-shaders', '');
+    return;
+  }
+  const paths = settings.shaders
+    .map((f) => path.join(settings.shaderDir, path.basename(f)))
+    .filter((p) => fs.existsSync(p));
+  mpvCommand('set_property', 'glsl-shaders', paths.join(';'));
+}
+
 /* ---------------- 元数据（轨道/章节，file-loaded 时拉取） ---------------- */
+
+/* 音频高级处理（D33）：增益/EQ/ReplayGain/Normalize/声道/WASAPI 独占/Bitstream */
+function applyAudioSettings() {
+  mpvCommand('set_property', 'volume-gain', settings.audioGain ?? 0);
+  mpvCommand('set_property', 'replaygain', settings.replayGain ?? 'off');
+  mpvCommand('set_property', 'audio-exclusive', settings.audioExclusive ? 'yes' : 'no');
+  mpvCommand('set_property', 'audio-spdif', settings.audioBitstream === 'none' ? '' : settings.audioBitstream);
+  if (settings.audioChannels && settings.audioChannels !== 'auto-safe') {
+    mpvCommand('set_property', 'audio-channels', settings.audioChannels);
+  } else {
+    mpvCommand('set_property', 'audio-channels', 'auto-safe');
+  }
+  // EQ + Normalize：经 af 滤镜链（equalizer 为 two-pole peaking EQ；dynaudnorm 动态归一化）
+  const af = [];
+  if (settings.audioNormalize) af.push('dynaudnorm');
+  if (Array.isArray(settings.audioEq) && settings.audioEq.some((v) => v !== 0)) {
+    const FREQS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+    settings.audioEq.forEach((gain, i) => {
+      if (gain !== 0) af.push(`equalizer=f=${FREQS[i]}:g=${gain}`);
+    });
+  }
+  mpvCommand('set_property', 'af', af.join(','));
+}
 
 async function refreshMetadata() {
   const [tracks, chapters, hdr] = await Promise.all([
@@ -372,6 +438,58 @@ let lastSentVolume = null;
 let lastSentMute = null;
 let thumbsStarted = false;
 
+/* D34 自动性能降级：缩放预设档 节能→平衡→高画质→极致（0..3，越大越贵）。
+   丢帧率 >0.5% 持续 5s 降一档；恢复 30s 稳定不自动升档（防抖动，仅 Toast 提示）。 */
+const SCALE_TIERS = [
+  { up: 'bilinear', down: 'bilinear' },                    // 节能
+  { up: 'spline36', down: 'bicubic' },                     // 平衡（默认）
+  { up: 'ewa_lanczos', down: 'spline36' },                 // 高画质
+  { up: 'ewa_lanczossharp', down: 'ewa_lanczos' },         // 极致
+];
+const DEGRADE_DROP_RATE = 0.005;   // 0.5%
+const DEGRADE_WINDOW_MS = 5000;
+const DEGRADE_RECOVER_MS = 30000;
+let perfBaseTier = 1;
+let perfDropsAccum = 0;
+let perfFramesAccum = 0;
+let perfWindowStart = 0;
+let perfRecoverSince = 0;
+let perfTier = 1;
+
+function autoPerfDegrade(drops, vfFps, containerFps) {
+  if (!currentPath || !mpvProc) { perfDropsAccum = 0; perfFramesAccum = 0; return; }
+  const now = Date.now();
+  if (!perfWindowStart) perfWindowStart = now;
+  // 累加本窗口丢帧与输出帧
+  perfDropsAccum += (drops ?? 0);
+  perfFramesAccum += Math.round((vfFps ?? 0) * 0.5);   // 0.5s 轮询
+  if (now - perfWindowStart >= DEGRADE_WINDOW_MS) {
+    const rate = perfFramesAccum > 0 ? perfDropsAccum / perfFramesAccum : 0;
+    if (rate > DEGRADE_DROP_RATE && perfTier > 0) {
+      perfTier--;
+      applyScaleTier(perfTier);
+      sendCastToast(`性能自动降级：缩放 ${['节能', '平衡', '高画质', '极致'][perfTier]}（丢帧 ${(rate * 100).toFixed(1)}%）`);
+      perfRecoverSince = now;
+    } else if (rate <= DEGRADE_DROP_RATE && perfTier < perfBaseTier) {
+      if (!perfRecoverSince) perfRecoverSince = now;
+      if (now - perfRecoverSince >= DEGRADE_RECOVER_MS) {
+        // 恢复稳定 → 不自动升档（防抖动），仅提示
+        perfRecoverSince = now;
+      }
+    } else {
+      perfRecoverSince = 0;
+    }
+    perfDropsAccum = 0; perfFramesAccum = 0; perfWindowStart = now;
+  }
+}
+
+function applyScaleTier(tier) {
+  const t = SCALE_TIERS[tier] || SCALE_TIERS[1];
+  mpvCommand('set_property', 'scale', t.up);
+  mpvCommand('set_property', 'dscale', t.down);
+  mpvCommand('set_property', 'cscale', t.down);
+}
+
 function startStatusPolling() {
   if (statusTimer) return;
   statusTimer = setInterval(async () => {
@@ -396,6 +514,8 @@ function startStatusPolling() {
       loadPending = false;
       pushPlaybackError();
     }
+    // D34 自动性能降级：丢帧率 >0.5% 持续 5s → 逐级降缩放（永不降源分辨率/帧率）
+    autoPerfDegrade(drops, vfFps, fps);
     // 记录续播位置
     if (currentPath && timePos != null && duration) updateRecentPosition(currentPath, timePos, duration);
     // 首次拿到时长 → 启动缩略图抽帧
@@ -405,31 +525,21 @@ function startStatusPolling() {
   }, 500);
 }
 
-/* ---------------- 最近播放（userData/recent.json） ---------------- */
+/* ---------------- 最近播放（SQLite play_history；D35） ---------------- */
 
 function readRecent() {
-  try { return JSON.parse(fs.readFileSync(RECENT_FILE(), 'utf8')); } catch { return []; }
+  try { return db.recentList(); } catch { return []; }
 }
 
-function writeRecent(list) {
-  try { fs.writeFileSync(RECENT_FILE(), JSON.stringify(list.slice(0, RECENT_CAP), null, 2)); } catch {}
-}
+function writeRecent() { /* no-op：写路径已并入 db.recentAdd/recentUpdatePosition */ }
 
 function addRecent(file) {
-  const name = path.basename(file);
-  const list = readRecent().filter((it) => it.path !== file);
-  list.unshift({ path: file, name, at: Date.now() });
-  writeRecent(list);
+  try { db.recentAdd(file, path.basename(file), Date.now()); } catch {}
 }
 
 function updateRecentPosition(file, timePos, duration) {
   if (!settings.rememberPosition) return;
-  const list = readRecent();
-  const it = list.find((x) => x.path === file);
-  if (!it) return;
-  it.position = Math.floor(timePos);
-  it.duration = Math.floor(duration);
-  writeRecent(list);
+  try { db.recentUpdatePosition(file, Math.floor(timePos), Math.floor(duration)); } catch {}
 }
 
 /* ---------------- 播放会话（单窗：mpv 嵌入唯一主窗口，路由切换 home/player） ---------------- */
@@ -479,6 +589,7 @@ function cleanupPlayback() {
   casting = null;
   videoFs = false;
   loadPending = false;
+  perfTier = perfBaseTier; perfDropsAccum = 0; perfFramesAccum = 0; perfWindowStart = 0; perfRecoverSince = 0;
   lastStatus = { title: null, timePos: null, duration: null, pause: true, volume: 100, mute: false, eof: false };
   lastSentVolume = null;
   lastSentMute = null;
@@ -579,31 +690,20 @@ async function openFileFlow() {
   startPlayback(filePaths[0]);
 }
 
-/* ---------------- 媒体库（本地刮削：文件名解析 + nfo + 同目录封面；无在线依赖） ---------------- */
+/* ---------------- 媒体库（本地刮削：文件名解析 + nfo + 同目录封面；无在线依赖；SQLite 持久化 D35） ---------------- */
 
-const LIBRARY_FILE = () => path.join(app.getPath('userData'), 'library.json');
+const LIBRARY_FILE = () => path.join(app.getPath('userData'), 'library.json');   // 仅作迁移源，迁移后 .bak
 const LIBRARY_SCHEMA = 2;   // v2：新增 specs 规格标签（D27）
 const POSTER_DIR = () => path.join(app.getPath('userData'), 'posters');
 const VIDEO_EXTS = new Set(['mkv', 'mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'ts', 'm2ts', 'rmvb', 'mpg', 'mpeg']);
 const POSTER_NAMES = ['poster.jpg', 'poster.png', 'folder.jpg', 'cover.jpg', 'cover.png'];
 
 let library = [];
-let librarySchema = 0;
-try {
-  const raw = JSON.parse(fs.readFileSync(LIBRARY_FILE(), 'utf8'));
-  // v2 前是裸数组；升级标记不一致时强制全量重扫（补 specs 字段）
-  if (Array.isArray(raw)) {
-    library = raw;
-    librarySchema = 0;
-  } else {
-    library = raw.items || [];
-    librarySchema = raw.schema || 0;
-  }
-} catch {}
+try { library = db.allMedia(); } catch {}
 let scanning = false;
 
 function saveLibrary() {
-  try { fs.writeFileSync(LIBRARY_FILE(), JSON.stringify({ schema: LIBRARY_SCHEMA, items: library }, null, 2)); } catch {}
+  try { db.replaceMedia(library); } catch {}
 }
 
 function notifyLibrary() {
@@ -736,9 +836,8 @@ function scanLibrary() {
   if (scanning) return;
   scanning = true;
   try {
-    // 库 schema 升级（如新增 specs 字段）→ 忽略增量缓存，全量重扫
-    const forceFull = librarySchema < LIBRARY_SCHEMA;
-    const seen = forceFull ? new Map() : new Map(library.map((it) => [it.path, it]));
+    // 增量扫描：mtime+size 未变则复用缓存（db 内旧条目）
+    const seen = new Map(library.map((it) => [it.path, it]));
     const next = [];
     for (const folder of settings.libraryFolders || []) {
       for (const file of walkVideos(folder)) {
@@ -769,7 +868,6 @@ function scanLibrary() {
     }
     next.sort((a, b) => b.mtime - a.mtime);
     library = next;
-    librarySchema = LIBRARY_SCHEMA;
     saveLibrary();
     notifyLibrary();
   } finally {
@@ -838,6 +936,10 @@ ipcMain.handle('settings:set', (_e, patch) => {
     hdrOverride = { mode: settings.hdrMode, algo: settings.hdrAlgo };
     if (currentPath) refreshMetadata();
   }
+  // 音频高级处理（D33）：改值实时生效
+  if (['audioGain', 'audioEq', 'replayGain', 'audioNormalize', 'audioChannels', 'audioExclusive', 'audioBitstream'].some((k) => k in patch)) {
+    if (currentPath && mpvProc) applyAudioSettings();
+  }
   if (needDlnaRestart) {
     if (dlnaProc) { dlnaProc.kill(); dlnaProc = null; }
     startDlna();
@@ -854,8 +956,51 @@ ipcMain.handle('library:clear', () => {   // 清空条目（保留文件夹配�
   notifyLibrary();
   return true;
 });
-ipcMain.handle('recent:clear', () => { writeRecent([]); return true; });
+ipcMain.handle('recent:clear', () => { db.recentClear(); return true; });
 ipcMain.handle('library:rescan', () => { scanLibrary(); return true; });
+
+/* 收藏 + 播放列表 + 合集（SQLite；D35） */
+ipcMain.handle('fav:list', () => db.favoriteList());
+ipcMain.handle('fav:toggle', (_e, file) => db.favoriteToggle(file));
+ipcMain.handle('fav:is-on', (_e, file) => db.favoriteIsOn(file));
+ipcMain.handle('playlist:list', () => db.playlistList());
+ipcMain.handle('playlist:create', (_e, name) => db.playlistCreate(String(name || '').trim()));
+ipcMain.handle('playlist:delete', (_e, id) => { db.playlistDelete(id); return true; });
+ipcMain.handle('playlist:add', (_e, id, file) => { db.playlistAddItem(id, file); return true; });
+ipcMain.handle('playlist:items', (_e, id) => db.playlistItems(id));
+ipcMain.handle('collection:list', () => db.collectionList());
+ipcMain.handle('collection:create', (_e, name) => db.collectionCreate(String(name || '').trim()));
+
+/* 用户 Shader（D32） */
+ipcMain.handle('shader:list', () => listShaders(settings.shaderDir));
+ipcMain.handle('shader:set-dir', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(homeWin, { title: '选择 Shader 目录', properties: ['openDirectory'] });
+  if (canceled || !filePaths[0]) return null;
+  const dir = filePaths[0];
+  const files = listShaders(dir);
+  if (!files.length) return { error: '该目录没有 .glsl 或 .hook 文件' };
+  settings.shaderDir = dir;
+  settings.shaders = [];
+  writeSettings();
+  return { dir, files };
+});
+ipcMain.handle('shader:apply', (_e, shaders) => {
+  const files = Array.isArray(shaders) ? shaders : [];
+  // 静态校验：禁 IO 内置函数（沙箱）
+  const bad = [];
+  for (const f of files) {
+    try {
+      const content = fs.readFileSync(path.join(settings.shaderDir, path.basename(f)), 'utf8');
+      const r = validateShader(content);
+      if (!r.ok) bad.push({ file: f, forbidden: r.forbidden });
+    } catch {}
+  }
+  settings.shaders = files.filter((f) => !bad.some((b) => b.file === f));
+  writeSettings();
+  if (currentPath && mpvProc) applyShaders();
+  return { ok: bad.length === 0, bad };
+});
+
 ipcMain.handle('library:add-folder', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(homeWin, {
     title: '添加媒体库文件夹', properties: ['openDirectory'],
@@ -978,14 +1123,21 @@ ipcMain.handle('app:screenshot', async () => {
    改为渲染层报起止，主进程跟随光标语义移动（16ms 节流） */
 let dragTimer = null;
 ipcMain.on('win:drag-start', () => {
-  if (!homeWin || homeWin.isDestroyed() || homeWin.isFullScreen()) return;
+  if (!homeWin || homeWin.isDestroyed() || videoFs) return;
   const startCursor = screen.getCursorScreenPoint();
-  const [startX, startY] = homeWin.getPosition();
+  // 用 getBounds 记录初始尺寸，拖动时用 setBounds 锁定 width/height：
+  // 透明 frameless 窗跨屏移动时，setPosition 会被 DWM 反复重算导致窗口缓慢放大（width/height 每帧 +1px）。
+  const b = homeWin.getBounds();
   clearInterval(dragTimer);
   dragTimer = setInterval(() => {
     if (!homeWin || homeWin.isDestroyed()) return clearInterval(dragTimer);
     const cur = screen.getCursorScreenPoint();
-    homeWin.setPosition(startX + cur.x - startCursor.x, startY + cur.y - startCursor.y);
+    homeWin.setBounds({
+      x: b.x + cur.x - startCursor.x,
+      y: b.y + cur.y - startCursor.y,
+      width: b.width,
+      height: b.height,
+    });
   }, 16);
 });
 ipcMain.on('win:drag-end', () => clearInterval(dragTimer));
@@ -993,7 +1145,7 @@ ipcMain.on('win:drag-end', () => clearInterval(dragTimer));
 /* 手动边缘缩放：透明窗无原生边框，8 向热区 → 主进程按方向改 bounds（16ms 节流，最小 640×400） */
 let resizeTimer = null;
 ipcMain.on('win:resize-start', (_e, dir) => {
-  if (!homeWin || homeWin.isDestroyed() || homeWin.isFullScreen() || homeWin.isMaximized()) return;
+  if (!homeWin || homeWin.isDestroyed() || videoFs || homeWin.isMaximized()) return;
   const startCursor = screen.getCursorScreenPoint();
   const b = homeWin.getBounds();
   clearInterval(resizeTimer);
@@ -1031,8 +1183,8 @@ function createHomeWindow(hash = '/home') {
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
   });
   homeWin.loadFile(DIST_HTML, { hash });
-  homeWin.on('enter-full-screen', () => { videoFs = true; });
-  homeWin.on('leave-full-screen', () => { videoFs = false; });
+  homeWin.on('enter-full-screen', () => { videoFs = true; homeWin.webContents.send('fs-status', true); });
+  homeWin.on('leave-full-screen', () => { videoFs = false; homeWin.webContents.send('fs-status', false); });
   // 渲染层 console → 文件日志（无头排障）
   homeWin.webContents.on('console-message', (_e, _level, message) => {
     try {
@@ -1048,6 +1200,27 @@ function createHomeWindow(hash = '/home') {
     }
   });
   homeWin.on('closed', () => { homeWin = null; });
+
+  // D22 跨屏：窗口移动/缩放时检测所在显示器变化 → HDR 能力变化 → 重跑决策链
+  let lastDisplayId = null;
+  homeWin.on('moved', () => checkCrossDisplay());
+  homeWin.on('resized', () => checkCrossDisplay());
+  homeWin.on('enter-full-screen', () => checkCrossDisplay());
+  function checkCrossDisplay() {
+    if (!homeWin || homeWin.isDestroyed()) return;
+    const bounds = homeWin.getBounds();
+    const disp = screen.getDisplayMatching(bounds);
+    const id = disp ? disp.id : null;
+    if (id !== lastDisplayId) {
+      lastDisplayId = id;
+      // 换屏 → 立即重跑决策链（mpv VO 也会因窗口 HWND 位置变化而可能重建）
+      if (currentPath && mpvProc) {
+        lastLogSize = 0;   // 强制 detectDisplayHdr 重读日志
+        refreshMetadata();
+      }
+    }
+  }
+  checkCrossDisplay();
 }
 
 function buildMenu() {
@@ -1082,6 +1255,8 @@ if (!gotLock) {
       return;
     }
     settings = readSettings();   // app.getPath 需 ready 后可靠，磁盘读取在此进行
+    db.open(path.join(app.getPath('userData'), 'aurora.db'));
+    library = db.allMedia();     // db 打开后加载媒体库（含 JSON 迁移）
     hdrOverride = { mode: settings.hdrMode, algo: settings.hdrAlgo };
     buildMenu();
     createTray();

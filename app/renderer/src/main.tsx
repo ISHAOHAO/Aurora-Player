@@ -25,6 +25,13 @@ function Root() {
     document.body.classList.remove('home', 'settings', 'player');
     document.body.classList.add(route); // player 路由下 body 透明(叠加窗)
   }, [route]);
+  // 视觉模式六态（规范 §5）：data-vmode 驱动环境光背景差异
+  useEffect(() => {
+    window.aurora.getSettings().then((s) => {
+      const m = s?.visualMode || 'cinema';
+      document.documentElement.dataset.vmode = m;
+    });
+  }, []);
   // 主进程驱动路由（播放/停止时切换 home/player）
   useEffect(() => window.aurora.onNavigate((r) => {
     const target = '#/' + (r === 'home' || r === 'settings' || r === 'player' ? r : 'home');

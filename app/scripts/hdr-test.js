@@ -21,7 +21,7 @@ eq('SDR 不启用色彩提示', d.props['target-colorspace-hint'], 'no');
 d = decide({ gamma: 'pq', primaries: 'bt.2020', sigPeak: 2.5 }, { hdr: true });
 eq('PQ + HDR 显示器 → 直通', d.mode, 'passthrough');
 eq('直通开 hint', d.props['target-colorspace-hint'], 'yes');
-eq('直通关动态峰值', d.props['hdr-compute-peak'], 'no');
+eq('直通动态峰值 auto(元数据缺失时自检)', d.props['hdr-compute-peak'], 'auto');
 
 d = decide({ gamma: 'smpte2084', primaries: 'bt.2020' }, { hdr: false });
 eq('PQ(别名) + SDR 显示器 → 色调映射', d.mode, 'tonemap');

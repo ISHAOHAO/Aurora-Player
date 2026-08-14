@@ -53,6 +53,13 @@ export interface Settings {
   volumeStep: number;
   defaultVolume: number;
   subFontSize: number;
+  audioGain: number;
+  audioEq: number[] | null;
+  replayGain: 'off' | 'track' | 'album';
+  audioNormalize: boolean;
+  audioChannels: string;
+  audioExclusive: boolean;
+  audioBitstream: string;
   hdrMode: string;
   hdrAlgo: string;
   dlnaEnabled: boolean;
@@ -64,6 +71,9 @@ export interface Settings {
   targetContrast: number;
   saturation: number;
   hdrPeakPercentile: number;
+  visualMode: 'cinema' | 'aurora' | 'minimal' | 'glass' | 'oled' | 'custom';
+  shaderDir: string;
+  shaders: string[];
 }
 
 export interface LibrarySpecs {
@@ -102,7 +112,7 @@ export interface Chapter {
 
 export interface HdrInfo {
   videoHdr: boolean;
-  kind: 'PQ' | 'HLG' | null;
+  kind: 'PQ' | 'HLG' | 'DV' | null;
   transfer: string | null;
   primaries: string | null;
   sigPeak: number | null;
@@ -112,6 +122,8 @@ export interface HdrInfo {
   reason: string;
   algo: string;
   override: string;
+  hdr10plus?: boolean;
+  dv?: boolean;
 }
 
 export interface PlayerMeta {
@@ -156,6 +168,23 @@ export interface AuroraBridge {
   /** NAS 在线浏览：列目录(文件夹+视频)，在线点播不入库 */
   listNas: (dir: string) => Promise<{ ok: boolean; unc?: string; entries?: NasEntry[]; error?: string; needAuth?: boolean }>;
   openNasExplorer: (unc: string) => Promise<void>;
+  /** 收藏（SQLite favorite 表；D35） */
+  favList: () => Promise<{ path: string; at: number; title: string | null; name: string | null; poster: string | null }[]>;
+  favToggle: (file: string) => Promise<boolean>;
+  favIsOn: (file: string) => Promise<boolean>;
+  /** 播放列表（SQLite playlist 表；D35） */
+  playlistList: () => Promise<{ id: number; name: string; at: number }[]>;
+  playlistCreate: (name: string) => Promise<{ id: number; name: string } | null>;
+  playlistDelete: (id: number) => Promise<boolean>;
+  playlistAdd: (id: number, file: string) => Promise<boolean>;
+  playlistItems: (id: number) => Promise<{ path: string; name: string | null; title: string | null; poster: string | null }[]>;
+  /** 合集（SQLite collection 表；D35） */
+  collectionList: () => Promise<{ id: number; name: string; at: number }[]>;
+  collectionCreate: (name: string) => Promise<{ id: number; name: string } | null>;
+  /** 用户 Shader（D32） */
+  shaderList: () => Promise<string[]>;
+  shaderSetDir: () => Promise<{ dir: string; files: string[] } | { error: string } | null>;
+  shaderApply: (shaders: string[]) => Promise<{ ok: boolean; bad: { file: string; forbidden: string[] }[] }>;
   onLibraryUpdated: (cb: (items: LibraryItem[]) => void) => () => void;
   /** 主进程路由切换指令（nav:goto，值为 home/settings/player） */
   onNavigate: (cb: (route: string) => void) => () => void;
@@ -181,6 +210,8 @@ export interface AuroraBridge {
   exportLog: () => Promise<string | null>;
   /** 播放失败推送（end-file reason=error，D25） */
   onPlayError: (cb: (e: PlayError) => void) => () => void;
+  /** 播放窗口全屏状态推送 */
+  onFullscreen: (cb: (fs: boolean) => void) => () => void;
   /** 手动窗口拖拽（透明窗 app-region 失效的替代方案） */
   dragStart: () => void;
   dragEnd: () => void;

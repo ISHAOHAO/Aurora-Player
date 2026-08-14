@@ -1,7 +1,8 @@
 import { useEffect } from 'react';
 import type { MouseEvent } from 'react';
 
-const RESIZE_DIRS = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+// 顶部中间不设缩放热区（让位给标题栏/拖拽条，避免拖拽误触发缩放）；四角+左右+底部保留
+const RESIZE_DIRS = ['s', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
 
 /** 透明窗无原生边框：手动拖拽（mousedown → 主进程跟手移动），按钮/输入框不触发 */
 export function dragHandler(): (e: MouseEvent) => void {

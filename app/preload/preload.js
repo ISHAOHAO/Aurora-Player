@@ -22,6 +22,19 @@ contextBridge.exposeInMainWorld('aurora', {
   addLibraryFolder: () => ipcRenderer.invoke('library:add-folder'),
   listNas: (dir) => ipcRenderer.invoke('nas:list', dir),
   openNasExplorer: (unc) => ipcRenderer.invoke('nas:open-explorer', unc),
+  favList: () => ipcRenderer.invoke('fav:list'),
+  favToggle: (file) => ipcRenderer.invoke('fav:toggle', file),
+  favIsOn: (file) => ipcRenderer.invoke('fav:is-on', file),
+  playlistList: () => ipcRenderer.invoke('playlist:list'),
+  playlistCreate: (name) => ipcRenderer.invoke('playlist:create', name),
+  playlistDelete: (id) => ipcRenderer.invoke('playlist:delete', id),
+  playlistAdd: (id, file) => ipcRenderer.invoke('playlist:add', id, file),
+  playlistItems: (id) => ipcRenderer.invoke('playlist:items', id),
+  collectionList: () => ipcRenderer.invoke('collection:list'),
+  collectionCreate: (name) => ipcRenderer.invoke('collection:create', name),
+  shaderList: () => ipcRenderer.invoke('shader:list'),
+  shaderSetDir: () => ipcRenderer.invoke('shader:set-dir'),
+  shaderApply: (shaders) => ipcRenderer.invoke('shader:apply', shaders),
   onLibraryUpdated: (cb) => {
     const listener = (_e, items) => cb(items);
     ipcRenderer.on('library:updated', listener);
@@ -69,5 +82,11 @@ contextBridge.exposeInMainWorld('aurora', {
     const listener = (_e, err) => cb(err);
     ipcRenderer.on('mpv:error', listener);
     return () => ipcRenderer.removeListener('mpv:error', listener);
+  },
+
+  onFullscreen: (cb) => {
+    const listener = (_e, fs) => cb(fs);
+    ipcRenderer.on('fs-status', listener);
+    return () => ipcRenderer.removeListener('fs-status', listener);
   },
 });

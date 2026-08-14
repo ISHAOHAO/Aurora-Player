@@ -42,6 +42,7 @@ export default function Home() {
   const [nasEntries, setNasEntries] = useState<NasEntry[] | null>(null);
   const [nasMsg, setNasMsg] = useState<{ text: string; unc?: string; needAuth?: boolean; ok?: boolean } | null>(null);
   const [libFilter, setLibFilter] = useState<LibFilter>('all');
+  const [query, setQuery] = useState('');
 
   useWindowDragRelease();
 
@@ -54,6 +55,9 @@ export default function Home() {
 
   const head = recent[0];
   const openFile = () => window.aurora.openFile();
+  const q = query.trim().toLowerCase();
+  const libMatches = q ? library.filter((it) => (it.title || '').toLowerCase().includes(q) || (it.name || '').toLowerCase().includes(q)) : [];
+  const recentMatches = q ? recent.filter((it) => (it.name || '').toLowerCase().includes(q)) : [];
   const playUrl = () => {
     const u = url.trim();
     if (!u) return;
@@ -100,6 +104,17 @@ export default function Home() {
             <div className={`dot${dlna?.running ? '' : ' off'}`} />
             <span>{dlna?.running ? `DLNA 在线 · ${dlna.friendlyName}` : 'DLNA 启动中…'}</span>
           </div>
+          <div className="global-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+            <input
+              aria-label="全局搜索"
+              placeholder="搜索媒体库与最近播放…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') setQuery(''); }}
+            />
+            {query && <button className="clear" onClick={() => setQuery('')} title="清除">✕</button>}
+          </div>
           <div className="spacer" />
           <button className="icon-btn theme-toggle" title="切换浅色/暗色" onClick={toggleTheme}>
             <svg className="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
@@ -111,6 +126,59 @@ export default function Home() {
           <WindowControls />
         </header>
 
+        {/* 全局搜索结果（D24）：查询非空时替换主页内容 */}
+        {q ? (
+          <section className="search-results">
+            <div className="section-head">
+              <h2>搜索“{query.trim()}”</h2>
+              <span>{libMatches.length + recentMatches.length} 个结果</span>
+            </div>
+            {libMatches.length === 0 && recentMatches.length === 0 && (
+              <div className="empty-hint">没有匹配“{query.trim()}”的内容</div>
+            )}
+            {libMatches.length > 0 && (
+              <>
+                <div className="section-head"><h2>媒体库</h2></div>
+                <div className="rail">
+                  {libMatches.map((it, i) => (
+                    <button key={it.path} className="poster" onClick={() => window.aurora.openPath(it.path)}>
+                      <div className="cover" style={it.poster ? {
+                        backgroundImage: `url("file:///${it.poster.replace(/\\/g, '/')}")`,
+                        backgroundSize: 'cover', backgroundPosition: 'center',
+                      } : {
+                        background: `linear-gradient(170deg, hsl(${200 + i * 24}, 14%, var(--cv-hi)) 0%, hsl(${200 + i * 24}, 16%, var(--cv-lo)) 75%)`,
+                      }}>
+                        {!it.poster && <span className="ext">{it.name.split('.').pop()?.toUpperCase()}</span>}
+                        <span className="spec-hover">{specLabel(it)}</span>
+                      </div>
+                      <div className="name">{it.title}</div>
+                      <div className="info timecode">{it.year || ''}</div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            {recentMatches.length > 0 && (
+              <>
+                <div className="section-head"><h2>最近播放</h2></div>
+                <div className="rail">
+                  {recentMatches.map((it, i) => (
+                    <button key={it.path} className="poster" onClick={() => window.aurora.openPath(it.path, it.position)}>
+                      <div className="cover" style={{
+                        background: `linear-gradient(170deg, hsl(${220 + i * 24}, 14%, var(--cv-hi)) 0%, hsl(${220 + i * 24}, 16%, var(--cv-lo)) 75%)`,
+                      }}>
+                        <span className="ext">{it.name.split('.').pop()?.toUpperCase()}</span>
+                      </div>
+                      <div className="name">{it.name}</div>
+                      <div className="info timecode">{fmtRemain(it) || new Date(it.at).toLocaleDateString()}</div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
+        ) : (
+          <>
         {/* Hero：继续播放 / 空态 */}
         {head ? (
           <section className="hero">
@@ -232,6 +300,8 @@ export default function Home() {
             </div>
           )}
         </section>
+          </>
+        )}
       </div>
 
       {/* 网络媒体 URL 弹窗 */}
