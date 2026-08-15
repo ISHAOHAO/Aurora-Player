@@ -13,6 +13,9 @@ function assertLanUrl(uri) {
   try { u = new URL(uri); } catch { return false; }
   const host = u.hostname.replace(/^\[|\]$/g, '');
   if (net.isIP(host)) {
+    // 云元数据端点（AWS/GCP/Azure 等 169.254.169.254）是经典 SSRF 目标，必须拒绝；
+    // 其余链路本地 169.254.x（APIPA 网段，NAS 自组网场景）放行
+    if (host === '169.254.169.254') return false;
     return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|169\.254\.|::1$|fe80:)/i.test(host);
   }
   return true; // 域名：局域网主机名场景，放行

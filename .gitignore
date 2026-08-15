@@ -11,7 +11,7 @@ app/scripts/shot*.png
 
 # 工具本地目录
 .agents/
-.claude/
+.opencode/
 .workbuddy/
 agent/
 skills-lock.json
