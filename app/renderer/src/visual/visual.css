@@ -340,3 +340,181 @@ body[data-vtheme="glass"] .poster .cover {
 /* Aurora — 发光氛围：更宽松、更柔和 */
 body[data-vtheme="aurora"] .rail { gap: calc(20px * var(--vs-density, 1)); }
 body[data-vtheme="aurora"] .tile, body[data-vtheme="aurora"] .poster .cover { border-radius: var(--vs-r-md, 12px); }
+
+/* ============================================================
+   Aqua — 深海水主题（body[data-vtheme="aqua"]）
+   玻璃卡片配方 + 浮层映射 + 聚光/按压 + 边缘雾化 + 海洋生物
+   ============================================================ */
+
+/* 流体层：canvas 与壁纸（pointer-events none，位于氛围层内） */
+.vs-fluid { position: absolute; inset: 0; pointer-events: none; }
+.vs-fluid-canvas { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.85; }
+.vs-fluid-wallpaper { position: absolute; inset: 0; overflow: hidden; }
+.vs-fluid-wallpaper img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover;
+  filter: blur(var(--vs-aqua-wallpaper-blur, 0px));
+}
+.vs-fluid-wallpaper::after {
+  content: ""; position: absolute; inset: 0;
+  background: rgb(255 255 255 / var(--vs-aqua-wallpaper-frost, 0));
+}
+:root[data-theme="dark"] .vs-fluid-wallpaper::after { background: rgb(12 18 27 / var(--vs-aqua-wallpaper-frost, 0)); }
+
+/* 亮度罩（brightness knob）：暗色压暗 / 浅色提亮 */
+.vs-fluid::after {
+  content: ""; position: absolute; inset: 0;
+  background:
+    linear-gradient(rgba(255,255,255,var(--vs-aqua-brightness-white,0)), rgba(255,255,255,var(--vs-aqua-brightness-white,0))),
+    linear-gradient(rgba(0,0,0,var(--vs-aqua-brightness-black,0)), rgba(0,0,0,var(--vs-aqua-brightness-black,0)));
+}
+
+/* 海洋生物层 */
+.vs-critters { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.vs-whale {
+  position: absolute; left: 50%; top: 52%;
+  transform: translate(-50%, -50%);
+  mix-blend-mode: screen; opacity: 0.9;
+}
+.vs-critter {
+  position: absolute; color: #7ea4df; opacity: 0.22;
+  font-size: 11px; line-height: 1; user-select: none;
+}
+.vs-critter[data-kind="fish"] { animation: vs-fish-swim 12s ease-in-out infinite; }
+.vs-critter[data-kind="fish-left"] { animation: vs-fish-swim-left 16s ease-in-out infinite; }
+.vs-critter[data-kind="bubble"] { color: #a9c6ef; opacity: 0; animation: vs-bubble-rise 9s ease-in infinite; font-size: 9px; }
+.vs-critter[data-kind="plankton"] { animation: vs-plankton 5s ease-in-out infinite; font-size: 8px; }
+
+@keyframes vs-fish-swim {
+  0% { transform: translate3d(0,0,0) rotate(-5deg); }
+  30% { transform: translate3d(40px,-15px,0) rotate(4deg); }
+  70% { transform: translate3d(52px,-18px,0) rotate(3deg); }
+  100% { transform: translate3d(0,0,0) rotate(-5deg); }
+}
+@keyframes vs-fish-swim-left {
+  0% { transform: translate3d(0,0,0) scaleX(-1) rotate(-5deg); }
+  30% { transform: translate3d(-34px,-12px,0) scaleX(-1) rotate(4deg); }
+  70% { transform: translate3d(-44px,-15px,0) scaleX(-1) rotate(3deg); }
+  100% { transform: translate3d(0,0,0) scaleX(-1) rotate(-5deg); }
+}
+@keyframes vs-bubble-rise {
+  0% { transform: translate3d(0,0,0); opacity: 0; }
+  10% { opacity: 0.5; }
+  100% { transform: translate3d(8px,-150px,0); opacity: 0; }
+}
+@keyframes vs-plankton {
+  0%, 100% { opacity: 0.1; }
+  50% { opacity: 0.38; }
+}
+
+/* 边缘雾化带：悬浮滚动内容之上、玻璃卡之下 */
+#vs-edge-top, #vs-edge-bottom {
+  position: fixed; left: 0; right: 0; height: 13px;
+  z-index: 7; pointer-events: none;
+  backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+  background: rgba(0,0,0,0.15);
+}
+:root[data-theme="light"] #vs-edge-top, :root[data-theme="light"] #vs-edge-bottom { background: rgba(255,255,255,0.2); }
+#vs-edge-top {
+  top: 0;
+  -webkit-mask-image: linear-gradient(180deg, black 0%, transparent 100%);
+  mask-image: linear-gradient(180deg, black 0%, transparent 100%);
+}
+#vs-edge-bottom {
+  bottom: 0;
+  -webkit-mask-image: linear-gradient(0deg, black 0%, transparent 100%);
+  mask-image: linear-gradient(0deg, black 0%, transparent 100%);
+}
+
+/* Aqua 玻璃卡片（浮层映射） */
+body[data-vtheme="aqua"] .topbar,
+body[data-vtheme="aqua"] .hero-card,
+body[data-vtheme="aqua"] .tile,
+body[data-vtheme="aqua"] .poster .cover,
+body[data-vtheme="aqua"] .url-modal,
+body[data-vtheme="aqua"] .nas-browser,
+body[data-vtheme="aqua"] .control-deck,
+body[data-vtheme="aqua"] .top-info,
+body[data-vtheme="aqua"] .pop-menu,
+body[data-vtheme="aqua"] .console-drawer,
+body[data-vtheme="aqua"] .cast-toast,
+body[data-vtheme="aqua"] .win-float,
+body[data-vtheme="aqua"] .settings-topbar,
+body[data-vtheme="aqua"] .settings-nav {
+  background: var(--vs-glass-card-dark, rgba(22,25,34,0.5));
+  border: 1px solid rgba(148,180,220,0.32);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.07),
+    0 10px 36px rgba(2,6,14,0.5);
+  backdrop-filter: blur(var(--vs-glass-blur, 20px)) saturate(1.15);
+  -webkit-backdrop-filter: blur(var(--vs-glass-blur, 20px)) saturate(1.15);
+}
+:root[data-theme="light"] body[data-vtheme="aqua"] .topbar,
+:root[data-theme="light"] body[data-vtheme="aqua"] .hero-card,
+:root[data-theme="light"] body[data-vtheme="aqua"] .tile,
+:root[data-theme="light"] body[data-vtheme="aqua"] .poster .cover,
+:root[data-theme="light"] body[data-vtheme="aqua"] .url-modal,
+:root[data-theme="light"] body[data-vtheme="aqua"] .nas-browser,
+:root[data-theme="light"] body[data-vtheme="aqua"] .control-deck,
+:root[data-theme="light"] body[data-vtheme="aqua"] .top-info,
+:root[data-theme="light"] body[data-vtheme="aqua"] .pop-menu,
+:root[data-theme="light"] body[data-vtheme="aqua"] .console-drawer,
+:root[data-theme="light"] body[data-vtheme="aqua"] .cast-toast,
+:root[data-theme="light"] body[data-vtheme="aqua"] .win-float,
+:root[data-theme="light"] body[data-vtheme="aqua"] .settings-topbar,
+:root[data-theme="light"] body[data-vtheme="aqua"] .settings-nav {
+  background: var(--vs-glass-card-light, rgba(255,255,255,0.5));
+  border-color: rgba(19,45,83,0.26);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.5),
+    0 10px 36px rgba(19,45,83,0.16);
+}
+
+/* 大浮层 / 面板 / 原子圆角体系（20 / 14 / 8） */
+body[data-vtheme="aqua"] .topbar,
+body[data-vtheme="aqua"] .hero-card,
+body[data-vtheme="aqua"] .control-deck,
+body[data-vtheme="aqua"] .settings-nav { border-radius: 20px; }
+body[data-vtheme="aqua"] .tile,
+body[data-vtheme="aqua"] .poster .cover,
+body[data-vtheme="aqua"] .pop-menu,
+body[data-vtheme="aqua"] .console-drawer,
+body[data-vtheme="aqua"] .url-modal,
+body[data-vtheme="aqua"] .nas-browser { border-radius: 14px; }
+body[data-vtheme="aqua"] .icon-btn { border-radius: 8px; }
+
+/* 播放页特判：透明窗下玻璃=半透明染色（背后无 DOM 可模糊），保持可读 */
+body[data-vtheme="aqua"] .control-deck,
+body[data-vtheme="aqua"] .top-info {
+  background: rgba(0,0,0,0.4);
+  border-color: rgba(148,180,220,0.3);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.07);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* 光标聚光：注入的 glow div */
+.vs-spot-glow {
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: -1;
+}
+[data-vs-spot] { position: relative; isolation: isolate; }
+[data-vs-press] { transition: transform 0.1s ease-out; }
+
+/* 滚动正文防糊（内容穿过玻璃边缘仍清晰） */
+body[data-vtheme="aqua"] .page { text-shadow: 0 0 1px rgba(0,0,0,0.4); }
+:root[data-theme="light"] body[data-vtheme="aqua"] .page { text-shadow: 0 0 1px rgba(255,255,255,0.55), 0 1px 2px rgba(19,45,83,0.08); }
+
+/* 焦点与选区（Aqua 蓝色系） */
+body[data-vtheme="aqua"] :focus-visible { outline: 2px solid rgba(110,155,232,0.85); outline-offset: 1px; }
+body[data-vtheme="aqua"] ::selection { background: rgba(110,155,232,0.35); }
+
+/* reduced-motion：静默氛围运动 */
+@media (prefers-reduced-motion: reduce) {
+  .vs-critter, .vs-whale { animation: none !important; }
+  [data-vs-press] { transition: none !important; }
+}
