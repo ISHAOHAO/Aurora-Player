@@ -140,6 +140,21 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
 .glass-1 { background: var(--glass-1); backdrop-filter: blur(20px) saturate(1.2); -webkit-backdrop-filter: blur(20px) saturate(1.2); border: 1px solid var(--glass-border); }
 .glass-2 { background: var(--glass-2); backdrop-filter: blur(28px) saturate(1.3); -webkit-backdrop-filter: blur(28px) saturate(1.3); border: 1px solid rgba(255, 255, 255, .10); }
 
+/* Aqua：播放页玻璃控件保持半透明染色（透明窗下 backdrop-filter 无效），优先级高于 visual.css 泛化规则 */
+body.player[data-vtheme="aqua"] .control-deck,
+body.player[data-vtheme="aqua"] .top-info {
+  background: rgba(0, 0, 0, .42);
+  border: 1px solid rgba(148, 180, 220, .3);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:root[data-theme="light"] body.player[data-vtheme="aqua"] .control-deck,
+:root[data-theme="light"] body.player[data-vtheme="aqua"] .top-info {
+  background: rgba(255, 255, 255, .5);
+  border-color: rgba(19, 45, 83, .22);
+}
+
 /* ---------- 通用控件 ---------- */
 .icon-btn {
   width: 40px; height: 40px; flex-shrink: 0;
