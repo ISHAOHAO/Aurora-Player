@@ -7,7 +7,7 @@ export type ThemeSource = 'builtin' | 'user';
 export type Density = 'compact' | 'comfortable' | 'spacious';
 export type MetadataDensity = 'minimal' | 'normal' | 'technical';
 export type Presentation = 'normal' | 'immersive';
-export type BackgroundMode = 'solid' | 'gradient' | 'cover' | 'none';
+export type BackgroundMode = 'solid' | 'gradient' | 'cover' | 'fluid' | 'wallpaper' | 'none';
 
 /** 视觉预算状态（由 route + playback 派生） */
 export type RouteState = 'browse' | 'settings' | 'playback' | 'immersive';
@@ -120,6 +120,8 @@ export interface VisualTheme {
     extremeOpacity?: boolean;
     performance?: 'balanced' | 'high' | 'eco';
   };
+
+  aqua?: VisualThemeAqua;
 }
 
 /** 状态预算（修正 1：Video First 运行时强制约束） */
@@ -201,6 +203,8 @@ export interface EngineParams {
     accentDim: string;
     accentBorder: string;
   };
+
+  aqua?: AquaEngineParams;
 }
 
 /** Resolver 输出：CSS 变量 + 引擎参数 */
@@ -215,4 +219,25 @@ export interface VisualFile {
   activeThemeId: string;
   activePresetId: string | null;
   presets: VisualTheme[];      // 仅用户预设（source: user），官方主题不落盘
+}
+
+/** Aqua 深海水主题专属参数（可选段；仅 Aqua 及其他需要它的主题填充） */
+export interface VisualThemeAqua {
+  backdrop: 'fluid' | 'wallpaper';
+  fluidHue: number;
+  fluidDepth: number;
+  bgBrightness: number;
+  wallpaper: string;
+  wallpaperBlur: number;
+  wallpaperFrost: number;
+  edgeFade: boolean;
+  spotlight: boolean;
+  press: boolean;
+  critters: boolean;
+  whale: boolean;
+}
+
+/** EngineParams 的 Aqua 运行时参数（enabled 由 resolver 写入：主题有 aqua 段时 true） */
+export interface AquaEngineParams extends VisualThemeAqua {
+  enabled: boolean;
 }
