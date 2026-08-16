@@ -121,9 +121,11 @@ check('7 主题 dark accent 各自不同', accents.size === 7);
 /* 2h. videoMaskPolygon：letterbox mask 几何 */
 {
   const bars = videoMaskPolygon({ top: 60, bottom: 540, left: 0, right: 960 }, 960, 600);
-  check('水平 bars mask 含 top/bottom', bars.includes('100% 60px') && bars.includes('0 540px'));
+  check('水平 bars mask 含 top/bottom 且中心镂空',
+    bars.includes('100% 60px, 0 60px') && bars.includes('0 60px, 0 540px') && bars.includes('0 540px, 100% 540px') && !bars.includes('0 60px, 100% 540px'));
   const pill = videoMaskPolygon({ top: 0, bottom: 600, left: 180, right: 780 }, 960, 600);
-  check('垂直 pillarbox mask 含 left/right 条', pill.includes('180px 100%') && pill.includes('780px 0') && !pill.includes('100% 600px'));
+  check('垂直 pillarbox mask 含 left/right 条且中心镂空',
+    pill.includes('180px 100%, 780px 100%') && !pill.includes('0 100%, 780px 0'));
   const full = videoMaskPolygon({ top: 0, bottom: 600, left: 0, right: 960 }, 960, 600);
   check('全窗 mask 退化为空 polygon', full.includes('100% 100%, 100% 100%'));
 }
