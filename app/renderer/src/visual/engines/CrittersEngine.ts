@@ -42,6 +42,7 @@ export class CrittersEngine {
     }
     container.appendChild(this.root);
     window.addEventListener('resize', this.onResize);
+    this.resizeWhale();
   }
   unmount(): void {
     this.stop();
@@ -74,7 +75,7 @@ export class CrittersEngine {
   }
 
   private start(): void {
-    if (this.running) return;
+    if (this.running || REDUCE) return;
     this.running = true;
     this.last = 0;
     this.raf = requestAnimationFrame(this.tick);
