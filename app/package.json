@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "license": "GPL-3.0-or-later",
-  "description": "Aurora Player — Win11 沉浸式视频播放器 (M2 完整 UI)",
+  "description": "Aurora Player — Win11 沉浸式视频播放器",
   "main": "main/main.js",
   "scripts": {
     "build": "vite build renderer",
     "start": "electron .",
-    "dev": "npm run build && electron ."
+    "dev": "npm run build && electron .",
+    "test:visual": "node scripts/visual-test.js"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",

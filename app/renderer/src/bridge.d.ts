@@ -139,6 +139,15 @@ export interface PlayError {
   attempted: string;
 }
 
+/** 视觉系统持久化结构（userData/visual.json） */
+export interface VisualFile {
+  version: 1;
+  activeThemeId: string;
+  activePresetId: string | null;
+  presets: VisualTheme[];
+}
+import type { VisualTheme } from './visual/types';
+
 export interface AuroraBridge {
   platform: string;
   versions: { electron: string; node: string };
@@ -157,6 +166,11 @@ export interface AuroraBridge {
   /** 设置读取/部分更新(返回合并后完整设置) */
   getSettings: () => Promise<Settings>;
   setSettings: (patch: Partial<Settings>) => Promise<Settings>;
+  /** 视觉系统：持久化边界（visual.json）+ 导出/导入 */
+  visualGet: () => Promise<VisualFile | null>;
+  visualSet: (file: VisualFile) => Promise<VisualFile>;
+  visualExport: (theme: VisualTheme) => Promise<string | null>;
+  visualImport: () => Promise<VisualTheme | null>;
   /** 媒体库 */
   getLibrary: () => Promise<LibraryItem[]>;
   rescanLibrary: () => Promise<boolean>;

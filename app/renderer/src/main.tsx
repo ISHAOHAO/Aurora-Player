@@ -3,7 +3,9 @@ import { createRoot } from 'react-dom/client';
 import Home from './pages/Home';
 import Player from './pages/Player';
 import Settings from './pages/Settings';
+import { VisualProvider } from './visual/VisualProvider';
 import './styles.css';
+import './visual/visual.css';
 
 // 同一 bundle 服务两类窗口:主窗口 #/home、#/settings,透明叠加窗 #/player
 // hashchange 客户端路由(不整页 reload)
@@ -25,13 +27,6 @@ function Root() {
     document.body.classList.remove('home', 'settings', 'player');
     document.body.classList.add(route); // player 路由下 body 透明(叠加窗)
   }, [route]);
-  // 视觉模式六态（规范 §5）：data-vmode 驱动环境光背景差异
-  useEffect(() => {
-    window.aurora.getSettings().then((s) => {
-      const m = s?.visualMode || 'cinema';
-      document.documentElement.dataset.vmode = m;
-    });
-  }, []);
   // 主进程驱动路由（播放/停止时切换 home/player）
   useEffect(() => window.aurora.onNavigate((r) => {
     const target = '#/' + (r === 'home' || r === 'settings' || r === 'player' ? r : 'home');
@@ -41,5 +36,7 @@ function Root() {
 }
 
 createRoot(document.getElementById('root')!).render(
-  <React.StrictMode><Root /></React.StrictMode>
+  <React.StrictMode>
+    <VisualProvider><Root /></VisualProvider>
+  </React.StrictMode>
 );

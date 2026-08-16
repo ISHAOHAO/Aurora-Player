@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { DlnaState, LibraryItem, NasEntry, RecentItem } from '../bridge.d';
 import { WindowControls, ResizeZones, dragHandler, useWindowDragRelease } from '../components/WindowChrome';
+import { PlaybackProbe } from '../visual/playback';
 
 /** 媒体库筛选（D27）：电影=无剧集号，剧集=有 episode；动漫/纪录片需刮削元数据，暂并入 */
 type LibFilter = 'all' | 'movie' | 'tv';
@@ -53,6 +54,13 @@ export default function Home() {
     return window.aurora.onLibraryUpdated(setLibrary);
   }, []);
 
+  // 视觉系统：把当前海报作为 cover palette 光源（Home 无播放帧）
+  useEffect(() => {
+    const p = library.find((it) => it.poster)?.poster;
+    if (p) PlaybackProbe.update({ coverUrl: `file:///${p.replace(/\\/g, '/')}` });
+    else PlaybackProbe.update({ coverUrl: null });
+  }, [library]);
+
   const head = recent[0];
   const openFile = () => window.aurora.openFile();
   const q = query.trim().toLowerCase();
@@ -92,7 +100,6 @@ export default function Home() {
   return (
     <>
       <ResizeZones />
-      <div className="ambient-stage"><div className="particles" /></div>
       <div className="page">
         {/* 顶栏（透明窗无原生标题栏：顶栏整体可拖拽） */}
         <header className="topbar" onMouseDown={dragHandler()}>

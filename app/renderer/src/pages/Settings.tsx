@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { Settings } from '../bridge.d';
 import { WindowControls, ResizeZones, dragHandler, useWindowDragRelease } from '../components/WindowChrome';
+import { VisualStore } from '../visual/store';
+import { VisualSystem } from '../visual/controller';
+import { useActiveTheme } from '../visual/useVisual';
 
 type Group = 'play' | 'video' | 'audio' | 'sub' | 'lib' | 'dlna' | 'ui';
 
@@ -34,6 +37,8 @@ export default function SettingsPage() {
   const [group, setGroup] = useState<Group>('play');
   const [shaderFiles, setShaderFiles] = useState<string[]>([]);
   const [shaderMsg, setShaderMsg] = useState<string | null>(null);
+  // 视觉主题选择以 VisualStore 为唯一 runtime source（订阅驱动，切换即同步高亮）
+  const activeTheme = useActiveTheme();
 
   useWindowDragRelease();
 
@@ -55,7 +60,6 @@ export default function SettingsPage() {
   return (
     <div className="settings-page">
       <ResizeZones />
-      <div className="ambient-stage"><div className="particles" /></div>
       <header className="settings-topbar" onMouseDown={dragHandler()}>
         <button className="back" onClick={() => { location.hash = '#/home'; }}>← 返回</button>
         <div className="spacer" />
@@ -240,19 +244,23 @@ export default function SettingsPage() {
         {group === 'ui' && (
           <>
             <div className="srow">
-              <span>主题</span>
+              <span>当前主题<small>（Visual System）</small></span>
               <div className="seg">
-                {[['auto', '跟随系统'], ['light', '浅色'], ['dark', '暗色']].map(([v, l]) => (
-                  <button key={v} className={s.theme === v ? 'on' : ''} onClick={() => patch({ theme: v as Settings['theme'] })}>{l}</button>
+                {VisualStore.listPresets().map((t) => (
+                  <button key={t.id} className={activeTheme.activeThemeId === t.id ? 'on' : ''}
+                    onClick={() => VisualStore.apply(t.id)}>{t.name}</button>
                 ))}
               </div>
             </div>
             <div className="srow">
-              <span>视觉模式<small>（规范 §5 六态）</small></span>
+              <span>详细参数</span>
+              <button className="seg-action" onClick={() => VisualSystem.setConsoleOpen(true)}>打开 Visual Console</button>
+            </div>
+            <div className="srow">
+              <span>主题<small>（基础明暗）</small></span>
               <div className="seg">
-                {[['cinema', '影院'], ['aurora', '极光'], ['minimal', '极简'], ['glass', '玻璃'], ['oled', 'OLED'], ['custom', '自定义']].map(([v, l]) => (
-                  <button key={v} className={s.visualMode === v ? 'on' : ''}
-                    onClick={() => { patch({ visualMode: v as Settings['visualMode'] }); document.documentElement.dataset.vmode = v; }}>{l}</button>
+                {[['auto', '跟随系统'], ['light', '浅色'], ['dark', '暗色']].map(([v, l]) => (
+                  <button key={v} className={s.theme === v ? 'on' : ''} onClick={() => patch({ theme: v as Settings['theme'] })}>{l}</button>
                 ))}
               </div>
             </div>

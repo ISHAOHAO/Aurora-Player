@@ -1,0 +1,242 @@
+/* ============================================================
+   Aurora Player — Visual System Prototype
+   base.css — 重置、氛围层基础样式、VisualConsole、原型切换条
+   ============================================================ */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body, #app { height: 100%; }
+
+body {
+  font-size: 14px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  font-family: var(--vs-font-ui, system-ui, "Segoe UI", "Microsoft YaHei UI", sans-serif);
+  color: var(--vs-text, #E8ECE9);
+  background: var(--vs-bg, #0E100F);
+  transition: background-color 400ms ease, color 400ms ease;
+}
+
+button { font-family: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+input, select, textarea { font-family: inherit; }
+img { display: block; }
+ul, ol { list-style: none; }
+
+.tc, .mono { font-variant-numeric: tabular-nums; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
+button:focus-visible, input:focus-visible, a:focus-visible {
+  outline: 2px solid var(--vs-accent, #5EE08C); outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ============================================================
+   氛围层（由 atmosphere.js / particles.js 挂载，z-index 低于内容）
+   全部 screen 混合 → 播放页视频保持主导
+   ============================================================ */
+#vs-atmosphere { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+.vs-scene { position: absolute; inset: 0; will-change: transform, opacity; }
+.vs-light { position: absolute; inset: 0; mix-blend-mode: screen; }
+.vs-light-blob { position: absolute; border-radius: 50%; }
+.vs-grain {
+  position: absolute; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+  background-size: 140px 140px;
+  mix-blend-mode: screen;
+  opacity: .05;
+}
+.vs-vignette {
+  position: absolute; inset: 0;
+  background: radial-gradient(120% 92% at 50% 50%, transparent 52%, rgba(0,0,0,.6) 100%);
+  opacity: .2;
+}
+.vs-bloom {
+  position: absolute; inset: 0;
+  background: radial-gradient(58% 42% at 50% 40%, rgba(255,255,255,.22) 0%, transparent 70%);
+  mix-blend-mode: screen;
+  opacity: 0;
+}
+#vs-particles { position: fixed; inset: 0; z-index: 1; pointer-events: none; mix-blend-mode: screen; }
+
+/* ============================================================
+   Visual Console（右缘贴边）
+   ============================================================ */
+#vs-console-btn {
+  position: fixed; right: 0; top: 50%; transform: translateY(-50%);
+  z-index: 9000;
+  padding: 14px 8px;
+  writing-mode: vertical-rl;
+  font-size: 12px; letter-spacing: .18em;
+  color: var(--vs-text2, #9BA39E);
+  background: rgba(18, 20, 18, .72);
+  border: 1px solid var(--vs-line-strong, rgba(255,255,255,.2));
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  backdrop-filter: blur(12px);
+  transition: color 200ms, background 200ms;
+}
+#vs-console-btn:hover { color: var(--vs-accent, #5EE08C); }
+
+#vs-console {
+  position: fixed; top: 0; right: 0; bottom: 0; width: 336px;
+  z-index: 9000;
+  display: flex; flex-direction: column;
+  background: rgba(14, 16, 15, .92);
+  border-left: 1px solid rgba(255,255,255,.14);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  font-family: var(--vs-font-ui, "Space Grotesk", sans-serif);
+  color: var(--vs-text, #E8ECE9);
+  transform: translateX(105%);
+  transition: transform 320ms cubic-bezier(.2, 0, 0, 1);
+  box-shadow: -20px 0 60px rgba(0,0,0,.4);
+}
+body.vs-console-open #vs-console { transform: translateX(0); }
+
+#vs-console .vc-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.1);
+}
+#vs-console .vc-title {
+  font-family: var(--vs-font-mono, ui-monospace, monospace);
+  font-size: 13px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--vs-accent, #5EE08C);
+}
+#vs-console .vc-active { margin-left: auto; font-size: 12px; color: rgba(255,255,255,.55); }
+#vs-console .vc-x {
+  width: 26px; height: 26px; border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: rgba(255,255,255,.6);
+}
+#vs-console .vc-x:hover { background: rgba(255,255,255,.12); color: #fff; }
+
+#vs-console .vc-tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 10px 12px 0; }
+#vs-console .vc-tabs button {
+  padding: 7px 11px; font-size: 12px;
+  color: rgba(255,255,255,.5);
+  border-bottom: 2px solid transparent;
+  transition: color 160ms, border-color 160ms;
+}
+#vs-console .vc-tabs button:hover { color: #fff; }
+#vs-console .vc-tabs button.on { color: var(--vs-accent, #5EE08C); border-bottom-color: var(--vs-accent, #5EE08C); }
+
+#vs-console .vc-body { flex: 1; overflow-y: auto; padding: 14px 16px; }
+#vs-console .vc-foot { padding: 10px 16px; border-top: 1px solid rgba(255,255,255,.1); }
+#vs-console .vc-hint { font-size: 11px; color: rgba(255,255,255,.4); line-height: 1.5; }
+
+/* 预设列表 */
+.vc-presets { display: flex; flex-direction: column; gap: 4px; }
+.vc-preset {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px; border-radius: 6px;
+  text-align: left; font-size: 13px;
+  color: rgba(255,255,255,.78);
+  border: 1px solid transparent;
+  transition: background 160ms, border-color 160ms;
+}
+.vc-preset:hover { background: rgba(255,255,255,.08); }
+.vc-preset.on { border-color: var(--vs-accent, #5EE08C); color: #fff; }
+.vc-preset .sw { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+.vc-preset .nm { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vc-preset .tag { font-size: 10px; color: rgba(255,255,255,.4); font-family: var(--vs-font-mono, monospace); }
+
+.vc-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.vc-actions button, .vc-row button {
+  height: 28px; padding: 0 11px; border-radius: 4px;
+  font-size: 12px; color: rgba(255,255,255,.7);
+  border: 1px solid rgba(255,255,255,.18);
+  transition: all 160ms;
+}
+.vc-actions button:hover { color: var(--vs-accent, #5EE08C); border-color: var(--vs-accent, #5EE08C); }
+
+/* 参数行 */
+.vc-rows { display: flex; flex-direction: column; }
+.vc-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 0; font-size: 12px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  color: rgba(255,255,255,.82);
+}
+.vc-row > span { flex-shrink: 0; }
+.vc-slider { display: flex; align-items: center; gap: 8px; flex: 1; max-width: 190px; }
+.vc-slider input[type="range"] { flex: 1; accent-color: var(--vs-accent, #5EE08C); }
+.vc-val {
+  min-width: 52px; text-align: right;
+  font-family: var(--vs-font-mono, monospace); font-size: 11px;
+  color: var(--vs-accent, #5EE08C);
+}
+.vc-row input[type="color"] { width: 40px; height: 26px; border: 1px solid rgba(255,255,255,.2); border-radius: 4px; background: none; }
+.vc-seg { display: flex; gap: 4px; }
+.vc-seg button { height: 26px; padding: 0 10px; font-size: 11px; }
+.vc-seg button.on { color: var(--vs-accent, #5EE08C); border-color: var(--vs-accent, #5EE08C); background: rgba(94,224,140,.1); }
+.vc-switch {
+  width: 34px; height: 19px; border-radius: 3px; position: relative;
+  border: 1px solid rgba(255,255,255,.25);
+  background: rgba(255,255,255,.08);
+}
+.vc-switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 13px; height: 13px; background: rgba(255,255,255,.5);
+  transition: transform 180ms, background 180ms;
+}
+.vc-switch.on { border-color: var(--vs-accent, #5EE08C); background: rgba(94,224,140,.15); }
+.vc-switch.on::after { transform: translateX(15px); background: var(--vs-accent, #5EE08C); }
+.vc-note { margin-top: 12px; font-size: 11px; color: rgba(255,255,255,.45); line-height: 1.6; }
+.vc-note code { font-family: var(--vs-font-mono, monospace); }
+
+/* ============================================================
+   原型切换条 + Toast（仅原型用，勿带入产品）
+   ============================================================ */
+#proto-chrome {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+  z-index: 9999;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  background: #16161a; color: #fff;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 999px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.55);
+  font-family: ui-monospace, "IBM Plex Mono", monospace;
+  font-size: 12px; user-select: none;
+}
+#proto-chrome .pbtn, #proto-chrome .theme-btn {
+  height: 28px; padding: 0 12px; border-radius: 999px;
+  font-size: 11px; letter-spacing: .04em; color: #B9B9C2;
+  transition: background 160ms, color 160ms;
+}
+#proto-chrome .pbtn:hover, #proto-chrome .theme-btn:hover { background: rgba(255,255,255,.1); color: #fff; }
+#proto-chrome .pbtn.on { background: #4C8DFF; color: #fff; }
+#proto-chrome .theme-btn.on { background: #5EE08C; color: #0A0C0B; }
+#proto-chrome .vlabel {
+  min-width: 128px; text-align: center; font-size: 11px; color: #E6E6EA; letter-spacing: .02em;
+}
+#proto-chrome .vlabel b { color: #5EE08C; font-weight: 600; }
+#proto-chrome .arrows { display: flex; gap: 2px; }
+#proto-chrome .arrow {
+  width: 28px; height: 28px; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #B9B9C2; font-size: 15px;
+  transition: background 160ms, color 160ms;
+}
+#proto-chrome .arrow:hover { background: rgba(255,255,255,.12); color: #fff; }
+#proto-chrome .sep { width: 1px; height: 20px; background: rgba(255,255,255,.16); margin: 0 4px; }
+
+.proto-toast {
+  position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%) translateY(8px);
+  z-index: 9998;
+  padding: 10px 18px; border-radius: 999px;
+  background: #202024; color: #fff; font-size: 13px;
+  border: 1px solid rgba(255,255,255,.14);
+  box-shadow: 0 10px 32px rgba(0,0,0,.5);
+  opacity: 0; pointer-events: none;
+  transition: opacity 180ms, transform 180ms;
+}
+.proto-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }

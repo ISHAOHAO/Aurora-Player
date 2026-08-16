@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PlayError, PlayerMeta, PlayerStatus, Track } from '../bridge.d';
+import { PlaybackProbe } from '../visual/playback';
 
 const IDLE_MS = 3000; // 规范 §3.2：静止 3 秒隐藏控制层
 
@@ -435,6 +436,19 @@ export default function Player() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 3000);
   }, []);
+
+  // 视觉系统：只推送已有播放状态，由 PlayerAtmosphere 决定 Normal/Immersive 与预算
+  useEffect(() => {
+    PlaybackProbe.update({
+      playing: !!(status && !status.idle && !status.pause),
+      paused: status?.pause ?? true,
+      idle,
+      fullscreen,
+      title: status?.title ?? null,
+      fileId: status?.path ?? null,
+      time: status?.timePos ?? 0,
+    });
+  }, [status, idle, fullscreen]);
 
   // 新的有效状态（file-loaded 后首个状态）→ 清除失败错误卡片
   useEffect(() => {
