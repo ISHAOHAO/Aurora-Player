@@ -12,11 +12,14 @@ export interface PlaybackInfo {
   fileId: string | null;   // 当前媒体文件（frame palette 缓存键）
   time: number;            // 当前播放位置（frame 取色用）
   coverUrl: string | null; // 当前海报（cover palette 用）
+  videoW: number | null;
+  videoH: number | null;
 }
 
 let state: PlaybackInfo = {
   playing: false, paused: true, idle: false, fullscreen: false,
   title: null, fileId: null, time: 0, coverUrl: null,
+  videoW: null, videoH: null,
 };
 const subs = new Set<() => void>();
 

@@ -447,8 +447,12 @@ export default function Player() {
       title: status?.title ?? null,
       fileId: status?.path ?? null,
       time: status?.timePos ?? 0,
+      videoW: status?.stats?.w ?? null,
+      videoH: status?.stats?.h ?? null,
     });
   }, [status, idle, fullscreen]);
+
+  useEffect(() => () => { PlaybackProbe.update({ videoW: null, videoH: null }); }, []);
 
   // 新的有效状态（file-loaded 后首个状态）→ 清除失败错误卡片
   useEffect(() => {

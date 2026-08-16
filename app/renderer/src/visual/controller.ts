@@ -20,6 +20,10 @@ import { AtmosphereEngine } from './engines/AtmosphereEngine';
 import { LightingEngine } from './engines/LightingEngine';
 import { ParticleEngine } from './engines/ParticleEngine';
 import { MotionEngine } from './engines/MotionEngine';
+import { FluidEngine } from './engines/FluidEngine';
+import { CrittersEngine } from './engines/CrittersEngine';
+import { SpotlightEngine } from './engines/SpotlightEngine';
+import { EdgeFadeLayer } from './engines/EdgeFadeLayer';
 
 let root: HTMLDivElement | null = null;
 let styleEl: HTMLStyleElement | null = null;
@@ -29,6 +33,10 @@ const atmosphere = new AtmosphereEngine();
 const lighting = new LightingEngine();
 const particles = new ParticleEngine();
 const motion = new MotionEngine();
+const fluid = new FluidEngine();
+const critters = new CrittersEngine();
+const spotlight = new SpotlightEngine();
+const edgeFade = new EdgeFadeLayer();
 
 let manualImmersive: ImmersiveOverride = null;
 let lastCover: PaletteColors | null = null;
@@ -146,6 +154,26 @@ function applyEngines(p: EngineParams, state: RouteState): void {
   const cap = state === 'playback' || state === 'immersive' ? 180 : state === 'browse' ? 60 : 0;
   particles.apply(p.particles, cap);
   motion.apply(p.motion);
+  critters.apply(p.aqua, state === 'playback' || state === 'immersive');
+  edgeFade.apply(p.aqua, state === 'playback' || state === 'immersive');
+  spotlight.apply(p.aqua);
+  fluid.apply(p.aqua);
+  const probe = PlaybackProbe.get();
+  const aspect = probe.videoW && probe.videoH ? probe.videoW / probe.videoH : null;
+  const winAspect = window.innerWidth / window.innerHeight;
+  let rect: { top: number; bottom: number; left: number; right: number } | null = null;
+  if (state === 'playback' || state === 'immersive') {
+    if (aspect && Math.abs(aspect - winAspect) > 0.01) {
+      if (aspect > winAspect) {
+        const h = window.innerWidth / aspect;
+        rect = { top: (window.innerHeight - h) / 2, bottom: (window.innerHeight + h) / 2, left: 0, right: window.innerWidth };
+      } else {
+        const w = window.innerHeight * aspect;
+        rect = { top: 0, bottom: window.innerHeight, left: (window.innerWidth - w) / 2, right: (window.innerWidth + w) / 2 };
+      }
+    }
+  }
+  fluid.setVideoRect(rect);
 }
 
 /* ---------- 生命周期 ---------- */
@@ -160,6 +188,10 @@ export function initVisualSystem(): void {
   lighting.mount(root);
   motion.attach(background.element, lighting.element);
   particles.mount(root);
+  fluid.mount(root);
+  critters.mount(root);
+  edgeFade.mount();
+  spotlight.mount();
 
   AppearanceProbe.init();
   unsubStore = VisualStore.on(refresh);
@@ -191,6 +223,10 @@ export function destroyVisualSystem(): void {
   lighting.unmount();
   particles.unmount();
   motion.destroy();
+  fluid.unmount();
+  critters.unmount();
+  spotlight.unmount();
+  edgeFade.unmount();
   root?.remove(); root = null;
   backdropEl?.remove(); backdropEl = null;
   if (styleEl) { styleEl.remove(); styleEl = null; }
