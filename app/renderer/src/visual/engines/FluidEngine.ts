@@ -71,7 +71,7 @@ export class FluidEngine {
   }
 
   private onResize = () => { this.resize(); };
-  private onVis = () => { if (document.hidden) this.stop(); else if (this.running && this.cfg) this.start(); };
+  private onVis = () => { if (document.hidden) this.stop(); else if (this.cfg && this.cfg.enabled && !REDUCE) this.start(); };
 
   private initGL(): void {
     const c = this.canvas;
