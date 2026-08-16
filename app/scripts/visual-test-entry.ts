@@ -101,6 +101,22 @@ check('7 主题 dark accent 各自不同', accents.size === 7);
   check('Cinema shadow ≠ Noir shadow（Noir=无阴影）', cinemaR.cssVars['--vs-shadow'] !== noirR.cssVars['--vs-shadow'] && noirR.cssVars['--vs-shadow'] === 'none');
 }
 
+/* 2g. Aqua 主题：aqua 段 → 令牌 + engineParams.aqua */
+{
+  const a = getBuiltinTheme('aqua')!;
+  check('Aqua 主题含 aqua 段', !!a.aqua);
+  const dark = resolve(a, { state: 'browse', appearance: 'dark' });
+  check('Aqua dark 有 --vs-glass-card-dark', (dark.cssVars['--vs-glass-card-dark'] || '').includes('linear-gradient'));
+  check('Aqua dark 有 --vs-frost', Number(dark.cssVars['--vs-frost']) > 0);
+  check('Aqua engineParams.aqua.enabled', dark.engineParams.aqua?.enabled === true);
+  check('Aqua aqua.fluidHue 传递', dark.engineParams.aqua?.fluidHue === 320);
+  check('Aqua scene mode=fluid 有兜底底色', (dark.cssVars['--vs-bg'] || '').length > 0);
+  const light = resolve(a, { state: 'browse', appearance: 'light' });
+  check('Aqua light 有 --vs-glass-card-light', (light.cssVars['--vs-glass-card-light'] || '').includes('linear-gradient'));
+  const c = getBuiltinTheme('cinema')!;
+  check('Cinema 无 aqua 引擎参数', resolve(c, { state: 'browse', appearance: 'dark' }).engineParams.aqua == null);
+}
+
 /* 3. Video First 硬上限（修正 1） */
 {
   const big = cloneTheme(getBuiltinTheme('immersive')!);   // bgOpacity 0.84

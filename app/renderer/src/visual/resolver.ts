@@ -75,6 +75,9 @@ function sceneOf(theme: VisualTheme, cover: PaletteColors | null, appearance: Ap
   }
   // dark
   if (s.mode === 'solid' && s.solid) return { css: `linear-gradient(${s.solid}, ${s.solid})`, base: s.solid };
+  if (s.mode === 'fluid' || s.mode === 'wallpaper') {
+    return { css: 'linear-gradient(160deg, #0C121B, #0A0F18 55%, #080C14)', base: '#0C121B' };
+  }
   if (s.mode === 'cover') {
     if (cover) return { css: `linear-gradient(${cover.angle}deg, ${cover.start}, ${cover.middle}, ${cover.end})`, base: cover.end };
     return { css: 'linear-gradient(160deg, #16161C, #0C0C10)', base: '#0C0C10' };
@@ -329,6 +332,44 @@ export function resolve(theme: VisualTheme, ctx: ResolveContext): ResolvedTheme 
       accentBorder,
     },
   };
+
+  // —— Aqua 专属令牌（theme.aqua 存在时）——
+  const A = theme.aqua;
+  if (A) {
+    const frost = Math.min(1.4, Math.max(0.05, ui.glass * 1.4));
+    cssVars['--vs-frost'] = String(frost);
+    cssVars['--vs-glass-card-light'] =
+      'linear-gradient(180deg, color-mix(in srgb, rgb(255 255 255) calc(50% * var(--vs-frost,1)), transparent), color-mix(in srgb, rgb(255 255 255) calc(35% * var(--vs-frost,1)), transparent))';
+    cssVars['--vs-glass-card-dark'] =
+      'linear-gradient(180deg, color-mix(in srgb, rgb(42 46 56) calc(50% * var(--vs-frost,1)), transparent), color-mix(in srgb, rgb(22 25 34) calc(50% * var(--vs-frost,1)), transparent))';
+    cssVars['--vs-aqua-hue'] = String(A.fluidHue);
+    cssVars['--vs-aqua-depth'] = String(A.fluidDepth / 100);
+    const darkBright = appearance === 'dark';
+    cssVars['--vs-aqua-brightness-black'] = String(darkBright ? Math.max(0, (50 - A.bgBrightness) / 50) : 0);
+    cssVars['--vs-aqua-brightness-white'] = String(darkBright ? 0 : Math.max(0, (A.bgBrightness - 50) / 50));
+    cssVars['--vs-aqua-wallpaper-blur'] = `${A.wallpaperBlur}px`;
+    cssVars['--vs-aqua-wallpaper-frost'] = String(A.wallpaperFrost / 100);
+    const glowHue = ((A.fluidHue + 320) % 360 + 360) % 360;
+    cssVars['--vs-aqua-spot-color'] = darkBright
+      ? `hsla(${glowHue}, 90%, 62%, 0.17)`
+      : `hsla(${glowHue}, 90%, 45%, 0.16)`;
+
+    engineParams.aqua = {
+      enabled: true,
+      backdrop: A.backdrop,
+      fluidHue: A.fluidHue,
+      fluidDepth: A.fluidDepth,
+      bgBrightness: A.bgBrightness,
+      wallpaper: A.wallpaper,
+      wallpaperBlur: A.wallpaperBlur,
+      wallpaperFrost: A.wallpaperFrost,
+      edgeFade: A.edgeFade,
+      spotlight: A.spotlight,
+      press: A.press,
+      critters: A.critters,
+      whale: A.whale,
+    };
+  }
 
   return { cssVars, engineParams };
 }
