@@ -8,13 +8,13 @@ import { VisualStore } from './store';
 import { VisualSystem } from './controller';
 import { useActiveTheme, usePresentation, useVisualConsoleOpen } from './useVisual';
 
-type Tab = 'preset' | 'appearance' | 'atmosphere' | 'particles' | 'motion' | 'player' | 'advanced';
+type Tab = 'preset' | 'appearance' | 'atmosphere' | 'particles' | 'motion' | 'player' | 'advanced' | 'aqua';
 
 const GROUPS: [Tab, string][] = [
   ['preset', 'Preset'], ['appearance', '外观'], ['atmosphere', '氛围'],
-  ['particles', '粒子'], ['motion', '运动'], ['player', '播放器'], ['advanced', '高级'],
+  ['particles', '粒子'], ['motion', '运动'], ['player', '播放器'], ['aqua', 'Aqua'], ['advanced', '高级'],
 ];
-const DEFAULT_TABS: Tab[] = ['preset', 'appearance', 'atmosphere', 'particles', 'motion', 'player'];
+const DEFAULT_TABS: Tab[] = ['preset', 'appearance', 'atmosphere', 'particles', 'motion', 'player', 'aqua'];
 
 interface SliderDef { path: string; label: string; min: number; max: number; step: number; fmt: (v: number) => string; }
 const SLIDERS: Record<string, SliderDef[]> = {
@@ -61,6 +61,13 @@ const SLIDERS: Record<string, SliderDef[]> = {
     { path: 'advanced.lightFalloff', label: '光照衰减', min: 0, max: 1, step: 0.01, fmt: (v) => `${Math.round(v * 100)}%` },
     { path: 'advanced.bloomSamples', label: '泛光采样', min: 2, max: 8, step: 1, fmt: (v) => `${Math.round(v)}` },
   ],
+  aqua: [
+    { path: 'aqua.fluidHue', label: '流体色相', min: 0, max: 360, step: 1, fmt: (v) => `${Math.round(v)}°` },
+    { path: 'aqua.fluidDepth', label: '流体深度', min: 0, max: 100, step: 1, fmt: (v) => `${Math.round(v)}` },
+    { path: 'aqua.bgBrightness', label: '背景亮度', min: 0, max: 100, step: 1, fmt: (v) => `${Math.round(v)}` },
+    { path: 'aqua.wallpaperBlur', label: '壁纸模糊', min: 0, max: 40, step: 1, fmt: (v) => `${Math.round(v)}px` },
+    { path: 'aqua.wallpaperFrost', label: '壁纸磨砂', min: 0, max: 100, step: 1, fmt: (v) => `${Math.round(v)}%` },
+  ],
 };
 const SEG_OPTS: Record<string, [string, string][]> = {
   'scene.mode': [['solid', '纯色'], ['gradient', '渐变'], ['cover', '封面']],
@@ -68,6 +75,7 @@ const SEG_OPTS: Record<string, [string, string][]> = {
   'player.metadata': [['minimal', '极简'], ['normal', '常规'], ['technical', '技术']],
   'advanced.motionCurve': [['linear', 'linear'], ['ease', 'ease'], ['cinematic', 'cinematic']],
   'advanced.performance': [['balanced', '平衡'], ['high', '高画质'], ['eco', '节能']],
+  'aqua.backdrop': [['fluid', '流体'], ['wallpaper', '壁纸']],
 };
 const SWITCHES: Record<string, [string, string][]> = {
   atmosphere: [['lighting.enabled', '环境光']],
@@ -75,6 +83,13 @@ const SWITCHES: Record<string, [string, string][]> = {
   motion: [['motion.enabled', '运动']],
   player: [['player.defaultPresentation', 'Immersive 默认']],
   advanced: [['advanced.extremeOpacity', '极端透明度']],
+  aqua: [
+    ['aqua.edgeFade', '边缘雾化'],
+    ['aqua.spotlight', '光标聚光'],
+    ['aqua.press', '悬浮按压'],
+    ['aqua.critters', '海洋生物'],
+    ['aqua.whale', '粒子鲸鱼'],
+  ],
 };
 
 function valueOf(path: string): unknown {
@@ -183,6 +198,29 @@ export function VisualConsole() {
       rows.push(segRow('ui.density', '密度'));
     }
     if (tab === 'player') rows.push(segRow('player.metadata', '元数据密度'));
+    if (tab === 'aqua') {
+      rows.push(segRow('aqua.backdrop', '背景源'));
+      rows.push(
+        <div className="vc-row" key="wallpaper">
+          <span>壁纸</span>
+          <div className="vc-seg">
+            <label className="vc-file" style={{ cursor: 'pointer' }}>
+              选择图片
+              <input type="file" accept="image/*" style={{ display: 'none' }}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  const fr = new FileReader();
+                  fr.onload = () => { VisualStore.setParam('aqua.wallpaper', String(fr.result)); toast('已设置壁纸'); };
+                  fr.readAsDataURL(f);
+                  e.target.value = '';
+                }} />
+            </label>
+            <button onClick={() => { VisualStore.setParam('aqua.wallpaper', ''); toast('已清除壁纸'); }}>清除</button>
+          </div>
+        </div>,
+      );
+    }
     if (tab === 'advanced') rows.push(segRow('advanced.motionCurve', '运动曲线'), segRow('advanced.performance', '性能档'));
     (SLIDERS[tab] ?? []).forEach((d) => {
       const v = Number(valueOf(d.path)) || d.min;
@@ -219,7 +257,7 @@ export function VisualConsole() {
           <button className="vc-x" onClick={() => VisualSystem.setConsoleOpen(false)}>✕</button>
         </div>
         <div className="vc-tabs">
-          {GROUPS.filter(([id]) => id === 'advanced' || DEFAULT_TABS.includes(id)).map(([id, l]) => (
+          {GROUPS.filter(([id]) => id === 'advanced' || DEFAULT_TABS.includes(id)).filter(([id]) => id !== 'aqua' || VisualStore.getActiveTheme().aqua).map(([id, l]) => (
             <button key={id} className={tab === id ? 'on' : ''} onClick={() => setTab(id)}>{l}</button>
           ))}
         </div>
