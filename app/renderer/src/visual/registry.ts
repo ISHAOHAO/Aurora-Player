@@ -5,7 +5,7 @@
  */
 import type { VisualTheme } from './types';
 
-export const THEME_IDS = ['cinema', 'aurora', 'noir', 'oled', 'glass', 'immersive'] as const;
+export const THEME_IDS = ['cinema', 'aurora', 'noir', 'oled', 'glass', 'immersive', 'aqua'] as const;
 export type ThemeId = typeof THEME_IDS[number];
 
 const t = (id: ThemeId, name: string, description: string, extra: Partial<VisualTheme>): VisualTheme => ({
@@ -137,6 +137,30 @@ export const REGISTRY: VisualTheme[] = [
         base: '#E3E6EC', surface: '#F4F6F9', surface2: '#E4E8EE', text: '#23272F',
         accent: '#C07035', bgOpacity: 0.4, lightingIntensity: 0.7,
       },
+    },
+  }),
+
+  /* ============ Aqua — 深海水主题（DSH-Aqua 风格：毛玻璃浮层 · 流体背景 · 海洋生物 · 光标聚光） ============ */
+  t('aqua', 'Aqua', '深海水主题：毛玻璃浮层 · 流体背景 · 海洋生物 · 光标聚光', {
+    scene: { mode: 'fluid', bgOpacity: 0.9, cover: { follow: true, locked: false, auto: true } },
+    lighting: { enabled: true, intensity: 0.45, blur: 34, spread: 0.55, saturation: 0.75, temperature: 0.8 },
+    particles: { enabled: true, density: 0.16, speed: 0.2, size: 0.42, opacity: 0.4, depth: 0.35, reaction: 0.25, color: '#A9C6EF', colorSecondary: '#7EA4DF', glow: 0.18, blur: 1.4, foregroundRatio: 0.02, distribution: 'uneven', motion: 'drift' },
+    motion: { enabled: true, camera: 0.2, parallax: 0.3, kenBurns: 0.5, transitionSpeed: 460 },
+    atmosphere: { grain: 0.25, bloom: 0.22, vignette: 0.22, aberration: 0.1 },
+    ui: { opacity: 0.92, glass: 0.72, blur: 20, border: 0.2, radius: 14, density: 'comfortable', accent: '#6E9BE8' },
+    player: { controlOpacity: 0.85, autoHide: 3, metadata: 'normal', defaultPresentation: 'normal' },
+    signature: { layout: 'glass', typography: 'clean', surface: 'glass', shape: 'translucent', density: 'medium', motion: 'medium', atmosphere: 'layered' },
+    appearance: {
+      light: {
+        scene: { start: '#F4F8FD', middle: '#EAF1F9', end: '#DCE7F4', angle: 170 },
+        base: '#F4F8FD', surface: '#FFFFFF', surface2: '#ECF2FA', text: '#13243E',
+        accent: '#3F76D8', bgOpacity: 0.4, lightingIntensity: 0.5, grain: 0.2, vignette: 0.1,
+      },
+    },
+    aqua: {
+      backdrop: 'fluid', fluidHue: 320, fluidDepth: 25, bgBrightness: 50,
+      wallpaper: '', wallpaperBlur: 0, wallpaperFrost: 0,
+      edgeFade: true, spotlight: true, press: true, critters: true, whale: true,
     },
   }),
 ];

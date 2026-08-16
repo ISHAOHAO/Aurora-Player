@@ -16,8 +16,8 @@ function check(name: string, cond: boolean) {
 }
 
 /* 1. registry */
-check('registry 6 个官方主题', REGISTRY.length === 6);
-check('主题 id 唯一', new Set(REGISTRY.map((t) => t.id)).size === 6);
+check('registry 7 个官方主题', REGISTRY.length === 7);
+check('主题 id 唯一', new Set(REGISTRY.map((t) => t.id)).size === 7);
 check('listThemes 返回 builtin', listThemes().every((t) => t.source === 'builtin'));
 check('getBuiltinTheme 深拷贝', getBuiltinTheme('cinema') !== getBuiltinTheme('cinema'));
 check('cloneTheme 独立', (() => { const a = cloneTheme(getBuiltinTheme('noir')!); a.ui.accent = '#000'; return getBuiltinTheme('noir')!.ui.accent !== '#000'; })());
@@ -34,7 +34,7 @@ for (const t of REGISTRY) {
   }
   accents.add(resolve(t, { state: 'browse', appearance: 'dark' }).cssVars['--vs-accent']);
 }
-check('6 主题 dark accent 各自不同', accents.size === 6);
+check('7 主题 dark accent 各自不同', accents.size === 7);
 
 /* 2b. Appearance 独立维度（问题 1）：Light/Dark 产出不同且语义正确 */
 {
@@ -57,7 +57,7 @@ check('6 主题 dark accent 各自不同', accents.size === 6);
       if (contrast > 60) okC++;
     }
   }
-  check('12 组合 text/bg 对比可读（≥60 亮度差）', okC === 12);
+  check('14 组合 text/bg 对比可读（≥60 亮度差）', okC === 14);
 }
 
 /* 2d. OLED Light ≠ OLED Dark（Phase 4.y：亮白参考模式 vs 纯黑影院） */
@@ -160,7 +160,7 @@ check('6 主题 dark accent 各自不同', accents.size === 6);
   check('官方主题未被污染', getBuiltinTheme('cinema')!.lighting.intensity === 0.25);
 
   // 8. State Sync（Phase 4.y 问题 2）：逐主题切换，store 与选中始终一致
-  for (const id of ['cinema', 'aurora', 'noir', 'oled', 'glass', 'immersive']) {
+  for (const id of ['cinema', 'aurora', 'noir', 'oled', 'glass', 'immersive', 'aqua']) {
     await VisualStore.apply(id);
     check(`state sync: apply(${id}) → activeThemeId`, VisualStore.activeThemeId === id && VisualStore.getActiveMeta().name.toLowerCase() === id);
   }
