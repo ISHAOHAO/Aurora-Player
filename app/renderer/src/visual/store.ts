@@ -19,9 +19,9 @@ interface Snapshot {
   revision: number;
 }
 
-let activeThemeId = 'cinema';
+let activeThemeId = 'aqua';
 let presets: VisualTheme[] = [];
-let snapshot: Snapshot = { activeThemeId: 'cinema', activeName: 'Cinema', activeSource: 'builtin', revision: 0 };
+let snapshot: Snapshot = { activeThemeId: 'aqua', activeName: 'Aqua', activeSource: 'builtin', revision: 0 };
 const listeners = new Set<Listener>();
 let seq = 0;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -155,13 +155,13 @@ async function duplicatePreset(id: string): Promise<string | null> {
 
 async function removePreset(id: string): Promise<void> {
   presets = presets.filter((x) => x.id !== id);
-  if (activeThemeId === id) { activeThemeId = 'cinema'; }
+  if (activeThemeId === id) { activeThemeId = 'aqua'; }
   await flush();
   emit();
 }
 
 async function resetActive(): Promise<void> {
-  activeThemeId = 'cinema';
+  activeThemeId = 'aqua';
   await flush();
   emit();
 }
@@ -186,7 +186,7 @@ async function init(): Promise<void> {
     presets = file.presets.filter((p) => p && p.id && p.scene && p.ui).map(cloneTheme);
     if (file.activePresetId && presets.some((p) => p.id === file.activePresetId)) activeThemeId = file.activePresetId;
     else if (file.activeThemeId) activeThemeId = file.activeThemeId;
-    if (!getBuiltinTheme(activeThemeId) && !isUserPreset(activeThemeId)) activeThemeId = 'cinema';
+    if (!getBuiltinTheme(activeThemeId) && !isUserPreset(activeThemeId)) activeThemeId = 'aqua';
   } else {
     // 首次启动：旧 settings.visualMode → 新主题 id 迁移（向后兼容，迁移后旧字段不再是视觉来源）
     await migrateFromVisualMode();
@@ -197,7 +197,7 @@ async function init(): Promise<void> {
 async function migrateFromVisualMode(): Promise<void> {
   try {
     const st = await window.aurora.getSettings();
-    const mode = st.visualMode || 'cinema';
+    const mode = st.visualMode || 'aqua';
     const map: Record<string, string> = { cinema: 'cinema', aurora: 'aurora', minimal: 'noir', glass: 'glass', oled: 'oled' };
     if (mode === 'custom') {
       const copy = makeCustomBase();
@@ -207,11 +207,11 @@ async function migrateFromVisualMode(): Promise<void> {
       presets = [copy];
       activeThemeId = copy.id;
     } else {
-      activeThemeId = map[mode] ?? 'cinema';
+      activeThemeId = map[mode] ?? 'aqua';
     }
     await flush();
   } catch {
-    activeThemeId = 'cinema';
+    activeThemeId = 'aqua';
   }
 }
 

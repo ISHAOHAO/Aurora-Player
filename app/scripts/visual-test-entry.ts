@@ -171,7 +171,7 @@ check('7 主题 dark accent 各自不同', accents.size === 7);
   await VisualStore.apply('noir');
   check('切换 Noir', VisualStore.getActiveMeta().name === 'Noir');
   await VisualStore.resetActive();
-  check('reset 回 Cinema', VisualStore.getActiveMeta().name === 'Cinema');
+  check('reset 回 Aqua', VisualStore.getActiveMeta().name === 'Aqua');
   // 官方主题未被修改
   check('官方主题未被污染', getBuiltinTheme('cinema')!.lighting.intensity === 0.25);
 
@@ -187,7 +187,7 @@ check('7 主题 dark accent 各自不同', accents.size === 7);
   check('listPresets 含 custom copy', VisualStore.listPresets().some((p) => p.source === 'user' && p.name.startsWith('Custom Copy')));
   // 选中态 identity：Settings 以 activeThemeId 比对 preset id（内置 id 与预设 id 不混淆）
   await VisualStore.resetActive();
-  check('reset 后 identity 回 Cinema', VisualStore.activeThemeId === 'cinema');
+  check('reset 后 identity 回 Aqua', VisualStore.activeThemeId === 'aqua');
   const noUserSelected = VisualStore.listPresets().filter((p) => p.id === VisualStore.activeThemeId && p.source === 'user').length === 0;
   check('内置主题选择不被 user preset 混淆', noUserSelected);
 
