@@ -8,6 +8,7 @@ import { resolve } from '../renderer/src/visual/resolver';
 import { STATE_BUDGETS } from '../renderer/src/visual/types';
 import { VisualStore } from '../renderer/src/visual/store';
 import type { VisualTheme } from '../renderer/src/visual/types';
+import { videoMaskPolygon } from '../renderer/src/visual/engines/FluidEngine';
 
 let ok = 0, fail = 0;
 function check(name: string, cond: boolean) {
@@ -115,6 +116,16 @@ check('7 主题 dark accent 各自不同', accents.size === 7);
   check('Aqua light 有 --vs-glass-card-light', (light.cssVars['--vs-glass-card-light'] || '').includes('linear-gradient'));
   const c = getBuiltinTheme('cinema')!;
   check('Cinema 无 aqua 引擎参数', resolve(c, { state: 'browse', appearance: 'dark' }).engineParams.aqua == null);
+}
+
+/* 2h. videoMaskPolygon：letterbox mask 几何 */
+{
+  const bars = videoMaskPolygon({ top: 60, bottom: 540, left: 0, right: 960 }, 960, 600);
+  check('水平 bars mask 含 top/bottom', bars.includes('100% 60px') && bars.includes('0 540px'));
+  const pill = videoMaskPolygon({ top: 0, bottom: 600, left: 180, right: 780 }, 960, 600);
+  check('垂直 pillarbox mask 含 left/right 条', pill.includes('180px 100%') && pill.includes('780px 0') && !pill.includes('100% 600px'));
+  const full = videoMaskPolygon({ top: 0, bottom: 600, left: 0, right: 960 }, 960, 600);
+  check('全窗 mask 退化为空 polygon', full.includes('100% 100%, 100% 100%'));
 }
 
 /* 3. Video First 硬上限（修正 1） */

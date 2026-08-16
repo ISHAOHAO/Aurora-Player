@@ -2,6 +2,17 @@ import type { AquaEngineParams } from '../types';
 
 const REDUCE = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+export function videoMaskPolygon(rect: { top: number; bottom: number; left: number; right: number }, w: number, h: number): string {
+  const t = Math.round(rect.top), b = Math.round(rect.bottom), l = Math.round(rect.left), r = Math.round(rect.right);
+  if (t === 0 && b === h && l === 0 && r === w) {
+    return 'polygon(0 0, 0 0, 0 0, 0 0, 100% 100%, 100% 100%, 100% 100%, 100% 100%)';
+  }
+  if (t > 0 || b < h) {
+    return `polygon(0 0, 100% 0, 100% ${t}px, 0 ${t}px, 0 ${b}px, 100% ${b}px, 100% 100%, 0 100%)`;
+  }
+  return `polygon(0 0, ${l}px 0, ${l}px 100%, ${r}px 100%, ${r}px 0, 100% 0, 100% 100%, 0 100%)`;
+}
+
 const VERT = `attribute vec2 aPos;void main(){gl_Position=vec4(aPos,0.,1.);}`;
 
 const FRAG = `precision highp float;
@@ -162,16 +173,7 @@ export class FluidEngine {
     this.rect = rect;
     if (!this.root) return;
     if (!rect) { this.root.style.clipPath = ''; return; }
-    const t = Math.round(rect.top), b = Math.round(rect.bottom), l = Math.round(rect.left), r = Math.round(rect.right);
-    if (t === 0 && b === window.innerHeight && l === 0 && r === window.innerWidth) {
-      this.root.style.clipPath = 'polygon(0 0, 0 0, 0 0, 0 0, 100% 100%, 100% 100%, 100% 100%, 100% 100%)';
-      return;
-    }
-    if (t > 0 || b < window.innerHeight) {
-      this.root.style.clipPath = `polygon(0 0, 100% 0, 100% ${t}px, 0 ${t}px, 0 ${b}px, 100% ${b}px, 100% 100%, 0 100%)`;
-    } else {
-      this.root.style.clipPath = `polygon(0 0, ${l}px 0, ${l}px 100%, 0 100%, ${r}px 0, 100% 0, 100% 100%, ${r}px 100%)`;
-    }
+    this.root.style.clipPath = videoMaskPolygon(rect, window.innerWidth, window.innerHeight);
   }
 
   setPointer(x: number, y: number): void { this.pointer.x = x; this.pointer.y = y; }

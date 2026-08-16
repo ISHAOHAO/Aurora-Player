@@ -93,7 +93,7 @@ body[data-console-open="true"] #vs-console-btn { opacity: 0; pointer-events: non
   transition: opacity 260ms ease;
 }
 #vs-console-backdrop.show { opacity: 1; }
-body[data-theme="light"] #vs-console-backdrop { background: rgba(30, 30, 34, 0.14); }
+:root[data-theme="light"] #vs-console-backdrop { background: rgba(30, 30, 34, 0.14); }
 
 /* 悬浮面板：安全区（避开顶栏窗口控制区 / 底部控制 / toast） */
 #vs-console {

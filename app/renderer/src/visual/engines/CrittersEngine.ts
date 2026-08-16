@@ -56,7 +56,7 @@ export class CrittersEngine {
     const showWhale = show && p?.whale && !onPlayer;
     if (this.root) this.root.style.display = show ? 'block' : 'none';
     if (this.whaleCanvas) this.whaleCanvas.style.display = showWhale ? 'block' : 'none';
-    if (this.root && onPlayer) this.root.style.opacity = '0.5';
+    if (this.root) this.root.style.opacity = onPlayer ? '0.5' : '1';
     if (showWhale) this.start();
     else this.stop();
   }

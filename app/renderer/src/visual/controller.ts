@@ -162,15 +162,13 @@ function applyEngines(p: EngineParams, state: RouteState): void {
   const aspect = probe.videoW && probe.videoH ? probe.videoW / probe.videoH : null;
   const winAspect = window.innerWidth / window.innerHeight;
   let rect: { top: number; bottom: number; left: number; right: number } | null = null;
-  if (state === 'playback' || state === 'immersive') {
-    if (aspect && Math.abs(aspect - winAspect) > 0.01) {
-      if (aspect > winAspect) {
-        const h = window.innerWidth / aspect;
-        rect = { top: (window.innerHeight - h) / 2, bottom: (window.innerHeight + h) / 2, left: 0, right: window.innerWidth };
-      } else {
-        const w = window.innerHeight * aspect;
-        rect = { top: 0, bottom: window.innerHeight, left: (window.innerWidth - w) / 2, right: (window.innerWidth + w) / 2 };
-      }
+  if ((state === 'playback' || state === 'immersive') && aspect) {
+    if (aspect > winAspect) {
+      const h = window.innerWidth / aspect;
+      rect = { top: (window.innerHeight - h) / 2, bottom: (window.innerHeight + h) / 2, left: 0, right: window.innerWidth };
+    } else {
+      const w = window.innerHeight * aspect;
+      rect = { top: 0, bottom: window.innerHeight, left: (window.innerWidth - w) / 2, right: (window.innerWidth + w) / 2 };
     }
   }
   fluid.setVideoRect(rect);

@@ -30,12 +30,21 @@ export class SpotlightEngine {
     const press = !!(p && p.enabled && p.press) && !REDUCE;
     this.on = spot;
     this.press = press;
+    if (this.on && !press) {
+      for (const [el] of this.glowMap) { el.removeAttribute('data-vs-press'); el.style.transform = ''; }
+    }
     this.stamp();
     if (!spot) this.teardown();
   }
 
   private stamp(): void {
     if (!this.on) return;
+    for (const [el] of this.glowMap) {
+      if (!el.isConnected) {
+        this.glowMap.get(el)?.remove();
+        this.glowMap.delete(el);
+      }
+    }
     const found = new Set<HTMLElement>();
     for (const sel of SPOT_SELECTORS) {
       for (const el of Array.from(document.querySelectorAll<HTMLElement>(sel))) {
@@ -55,7 +64,7 @@ export class SpotlightEngine {
   }
 
   private teardown(): void {
-    for (const [el, glow] of this.glowMap) { glow.remove(); el.removeAttribute('data-vs-spot'); el.removeAttribute('data-vs-press'); }
+    for (const [el, glow] of this.glowMap) { glow.remove(); el.removeAttribute('data-vs-spot'); el.removeAttribute('data-vs-press'); el.style.transform = ''; }
     this.glowMap.clear();
   }
 

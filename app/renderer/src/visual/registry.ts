@@ -1,5 +1,5 @@
 ﻿/**
- * visual/registry.ts — 官方主题注册表（6 主题）
+ * visual/registry.ts — 官方主题注册表（7 主题）
  * 主题 = 纯数据；每个主题携带 ThemeSignature（设计签名）与粒子人格（Particles profile），
  * 由 Resolver + visual.css + ParticleEngine 翻译成真正不同的视觉语言。
  */
