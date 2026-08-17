@@ -198,7 +198,7 @@ async function migrateFromVisualMode(): Promise<void> {
   try {
     const st = await window.aurora.getSettings();
     const mode = st.visualMode || 'aqua';
-    const map: Record<string, string> = { cinema: 'cinema', aurora: 'aurora', minimal: 'noir', glass: 'glass', oled: 'oled' };
+    const map: Record<string, string> = { cinema: 'aqua', aurora: 'aqua', minimal: 'aqua', glass: 'aqua', oled: 'aqua' };
     if (mode === 'custom') {
       const copy = makeCustomBase();
       copy.id = `user-${Date.now().toString(36)}`;

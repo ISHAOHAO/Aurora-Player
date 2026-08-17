@@ -356,7 +356,11 @@ export function resolve(theme: VisualTheme, ctx: ResolveContext): ResolvedTheme 
 
     engineParams.aqua = {
       enabled: true,
+      mode: A.mode,
       backdrop: A.backdrop,
+      videoBlur: A.videoBlur,
+      videoBrightness: A.videoBrightness,
+      mesh: A.mesh,
       fluidHue: A.fluidHue,
       fluidDepth: A.fluidDepth,
       bgBrightness: A.bgBrightness,
