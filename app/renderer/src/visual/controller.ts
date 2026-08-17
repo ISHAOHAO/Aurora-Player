@@ -24,6 +24,7 @@ import { FluidEngine } from './engines/FluidEngine';
 import { CrittersEngine } from './engines/CrittersEngine';
 import { SpotlightEngine } from './engines/SpotlightEngine';
 import { EdgeFadeLayer } from './engines/EdgeFadeLayer';
+import { MeshEngine } from './engines/MeshEngine';
 
 let root: HTMLDivElement | null = null;
 let styleEl: HTMLStyleElement | null = null;
@@ -37,6 +38,7 @@ const fluid = new FluidEngine();
 const critters = new CrittersEngine();
 const spotlight = new SpotlightEngine();
 const edgeFade = new EdgeFadeLayer();
+const mesh = new MeshEngine();
 
 let manualImmersive: ImmersiveOverride = null;
 let lastCover: PaletteColors | null = null;
@@ -156,6 +158,7 @@ function applyEngines(p: EngineParams, state: RouteState): void {
   motion.apply(p.motion);
   critters.apply(p.aqua, state === 'playback' || state === 'immersive');
   edgeFade.apply(p.aqua, state === 'playback' || state === 'immersive');
+  mesh.apply(p.aqua);
   spotlight.apply(p.aqua);
   fluid.apply(p.aqua);
   const probe = PlaybackProbe.get();
@@ -190,6 +193,7 @@ export function initVisualSystem(): void {
   critters.mount(root);
   edgeFade.mount();
   spotlight.mount();
+  mesh.mount(root);
 
   AppearanceProbe.init();
   unsubStore = VisualStore.on(refresh);
@@ -225,6 +229,7 @@ export function destroyVisualSystem(): void {
   critters.unmount();
   spotlight.unmount();
   edgeFade.unmount();
+  mesh.unmount();
   root?.remove(); root = null;
   backdropEl?.remove(); backdropEl = null;
   if (styleEl) { styleEl.remove(); styleEl = null; }

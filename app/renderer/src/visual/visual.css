@@ -369,6 +369,12 @@ body[data-vtheme="aurora"] .tile, body[data-vtheme="aurora"] .poster .cover { bo
     linear-gradient(rgba(0,0,0,var(--vs-aqua-brightness-black,0)), rgba(0,0,0,var(--vs-aqua-brightness-black,0)));
 }
 
+/* 网格层：canvas 与壁纸（pointer-events none，位于氛围层内） */
+.vs-mesh {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none;
+}
+
 /* 海洋生物层：critters（fish/bubble/plankton SVG）位于层内；粒子鲸鱼持有者居中于主列 */
 .vs-critters { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .vs-whale {
