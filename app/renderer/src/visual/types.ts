@@ -223,6 +223,7 @@ export interface VisualFile {
 
 /** Aqua 深海水主题专属参数（可选段；仅 Aqua 及其他需要它的主题填充） */
 export interface VisualThemeAqua {
+  mode: 'mica' | 'compat';
   backdrop: 'fluid' | 'wallpaper';
   fluidHue: number;
   fluidDepth: number;
@@ -230,6 +231,9 @@ export interface VisualThemeAqua {
   wallpaper: string;
   wallpaperBlur: number;
   wallpaperFrost: number;
+  videoBlur: number;
+  videoBrightness: number;
+  mesh: boolean;
   edgeFade: boolean;
   spotlight: boolean;
   press: boolean;
