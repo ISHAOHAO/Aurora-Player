@@ -139,7 +139,7 @@ const TYPEFACES: Record<string, TypeFace> = {
   geometric: { display: '"Segoe UI Variable Display","Segoe UI",sans-serif', ui: '"Segoe UI",sans-serif', mono: 'Consolas,monospace', headingWeight: 600, headingSpacing: '0.01em' },
   technical: { display: '"Segoe UI",sans-serif', ui: '"Segoe UI",sans-serif', mono: 'Consolas,monospace', headingWeight: 600, headingSpacing: '0.02em' },
   cinematic: { display: '"Segoe UI Variable Display","Segoe UI",sans-serif', ui: '"Segoe UI",sans-serif', mono: '"Cascadia Mono",Consolas,monospace', headingWeight: 600, headingSpacing: '-0.02em' },
-  clean: { display: '"Segoe UI Variable Display","Segoe UI",sans-serif', ui: '"Segoe UI",sans-serif', mono: 'Consolas,monospace', headingWeight: 600, headingSpacing: '-0.01em' },
+  clean: { display: '"Space Grotesk Variable", "Segoe UI Variable Display", "Segoe UI", sans-serif', ui: '"Space Grotesk Variable", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif', mono: 'ui-monospace, "Cascadia Mono", Consolas, monospace', headingWeight: 600, headingSpacing: '-0.01em' },
 };
 function shadowFor(surface: string, isLight: boolean): { shadow: string; glow: string; inset: string } {
   const s = isLight ? 'rgba(0,0,0,0.14)' : 'rgba(0,0,0,0.4)';

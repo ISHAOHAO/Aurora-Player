@@ -6,6 +6,7 @@ import Settings from './pages/Settings';
 import { VisualProvider } from './visual/VisualProvider';
 import './styles.css';
 import './visual/visual.css';
+import './visual/fonts.css';
 
 // 同一 bundle 服务两类窗口:主窗口 #/home、#/settings,透明叠加窗 #/player
 // hashchange 客户端路由(不整页 reload)
