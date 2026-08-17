@@ -60,10 +60,13 @@ export class MeshEngine {
     this.root?.remove(); this.root = null; this.ctx = null;
   }
 
-  apply(p: AquaEngineParams | undefined): void {
+  apply(p: AquaEngineParams | undefined, onPlayer: boolean): void {
     const show = !!(p && p.enabled && p.mesh);
     this.on = show;
-    if (this.root) this.root.style.display = show ? 'block' : 'none';
+    if (this.root) {
+      this.root.style.display = show ? 'block' : 'none';
+      this.root.style.opacity = show && onPlayer ? '0.5' : '1';
+    }
     if (!show) { this.stop(); return; }
     if (REDUCE || COARSE) { this.renderStatic(); return; }
     this.start();

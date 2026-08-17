@@ -157,7 +157,7 @@ export function VisualConsole() {
           <button onClick={() => { const n = prompt('重命名', meta.name); if (n?.trim()) { if (isUser) VisualStore.renamePreset(activeId, n.trim()); else VisualStore.saveAs(n.trim()); toast('已重命名'); } }}>重命名</button>
           <button onClick={() => { VisualStore.duplicatePreset(activeId); toast('已复制'); }}>复制</button>
           {isUser && <button onClick={() => { VisualStore.removePreset(activeId); toast('已删除'); }}>删除</button>}
-          <button onClick={() => { VisualStore.resetActive(); toast('已重置为 Cinema'); }}>重置</button>
+          <button onClick={() => { VisualStore.resetActive(); toast('已重置为 Aqua'); }}>重置</button>
           <button onClick={() => { VisualStore.exportActive(); toast('已导出'); }}>导出</button>
           <button onClick={() => { VisualStore.importFromFile().then((t) => toast(t ? `已导入：${t.name}` : '导入取消')); }}>导入</button>
         </div>

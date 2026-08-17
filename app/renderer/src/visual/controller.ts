@@ -158,9 +158,11 @@ function applyEngines(p: EngineParams, state: RouteState): void {
   motion.apply(p.motion);
   critters.apply(p.aqua, state === 'playback' || state === 'immersive');
   edgeFade.apply(p.aqua, state === 'playback' || state === 'immersive');
-  mesh.apply(p.aqua);
+  mesh.apply(p.aqua, state === 'playback' || state === 'immersive');
   spotlight.apply(p.aqua);
   fluid.apply(p.aqua, state === 'playback' || state === 'immersive');
+  const mode = p.aqua?.mode ?? 'mica';
+  if (document.documentElement.dataset.vsAquaMode !== mode) document.documentElement.dataset.vsAquaMode = mode;
   const probe = PlaybackProbe.get();
   const aspect = probe.videoW && probe.videoH ? probe.videoW / probe.videoH : null;
   const winAspect = window.innerWidth / window.innerHeight;
@@ -232,6 +234,7 @@ export function destroyVisualSystem(): void {
   mesh.unmount();
   root?.remove(); root = null;
   backdropEl?.remove(); backdropEl = null;
+  delete document.documentElement.dataset.vsAquaMode;
   if (styleEl) { styleEl.remove(); styleEl = null; }
 }
 

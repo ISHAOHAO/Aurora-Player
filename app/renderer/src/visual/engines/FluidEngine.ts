@@ -233,7 +233,6 @@ export class FluidEngine {
   private raf = 0;
   private running = false;
   private cfg: AquaEngineParams | null = null;
-  private rect: { top: number; bottom: number; left: number; right: number } | null = null;
   private color1: [number, number, number] = [0, 0, 0];
   private color2: [number, number, number] = [0, 0, 0];
   private color3: [number, number, number] = [0, 0, 0];
@@ -627,7 +626,6 @@ export class FluidEngine {
   }
 
   setVideoRect(rect: { top: number; bottom: number; left: number; right: number } | null): void {
-    this.rect = rect;
     if (!this.root) return;
     if (!rect) { this.root.style.clipPath = ''; return; }
     this.root.style.clipPath = videoMaskPolygon(rect, window.innerWidth, window.innerHeight);

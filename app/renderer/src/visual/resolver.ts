@@ -336,8 +336,13 @@ export function resolve(theme: VisualTheme, ctx: ResolveContext): ResolvedTheme 
   // —— Aqua 专属令牌（theme.aqua 存在时）——
   const A = theme.aqua;
   if (A) {
+    const mode = A.mode ?? 'mica';
+    const videoBlur = A.videoBlur ?? 6;
+    const videoBrightness = A.videoBrightness ?? 45;
+    const mesh = A.mesh ?? true;
     const frost = Math.min(1.4, Math.max(0.05, ui.glass * 1.4));
     cssVars['--vs-frost'] = String(frost);
+    cssVars['--vs-aqua-mode'] = mode;
     cssVars['--vs-glass-card-light'] =
       'linear-gradient(180deg, color-mix(in srgb, rgb(255 255 255) calc(50% * var(--vs-frost,1)), transparent), color-mix(in srgb, rgb(255 255 255) calc(35% * var(--vs-frost,1)), transparent))';
     cssVars['--vs-glass-card-dark'] =
@@ -356,11 +361,11 @@ export function resolve(theme: VisualTheme, ctx: ResolveContext): ResolvedTheme 
 
     engineParams.aqua = {
       enabled: true,
-      mode: A.mode,
+      mode,
       backdrop: A.backdrop,
-      videoBlur: A.videoBlur,
-      videoBrightness: A.videoBrightness,
-      mesh: A.mesh,
+      videoBlur,
+      videoBrightness,
+      mesh,
       fluidHue: A.fluidHue,
       fluidDepth: A.fluidDepth,
       bgBrightness: A.bgBrightness,

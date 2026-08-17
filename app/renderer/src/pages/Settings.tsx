@@ -240,15 +240,14 @@ export default function SettingsPage() {
         {group === 'ui' && (
           <>
             <div className="srow">
-              <span>当前主题<small>（Aqua · Visual System）</small></span>
-              <button className="seg-action" onClick={() => VisualSystem.setConsoleOpen(true)}>打开 Visual Console</button>
-            </div>
-            <div className="srow">
-              <span>主题<small>（基础明暗）</small></span>
-              <div className="seg">
-                {[['auto', '跟随系统'], ['light', '浅色'], ['dark', '暗色']].map(([v, l]) => (
-                  <button key={v} className={s.theme === v ? 'on' : ''} onClick={() => patch({ theme: v as Settings['theme'] })}>{l}</button>
-                ))}
+              <span>主题<small>（Aqua · 基础明暗）</small></span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div className="seg">
+                  {[['auto', '跟随系统'], ['light', '浅色'], ['dark', '暗色']].map(([v, l]) => (
+                    <button key={v} className={s.theme === v ? 'on' : ''} onClick={() => patch({ theme: v as Settings['theme'] })}>{l}</button>
+                  ))}
+                </div>
+                <button className="seg-action" onClick={() => VisualSystem.setConsoleOpen(true)}>打开 Visual Console</button>
               </div>
             </div>
           </>

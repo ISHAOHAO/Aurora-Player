@@ -73,6 +73,7 @@ check('Aqua dark accent 存在', accents.size === 1);
   check('Aqua aqua.mode=mica', dark.engineParams.aqua?.mode === 'mica');
   check('Aqua aqua.mesh=true', dark.engineParams.aqua?.mesh === true);
   check('Aqua aqua.videoBlur=6', dark.engineParams.aqua?.videoBlur === 6);
+  check('Aqua aqua.videoBrightness=45', dark.engineParams.aqua?.videoBrightness === 45);
   check('Aqua scene mode=fluid 有兜底底色', (dark.cssVars['--vs-bg'] || '').length > 0);
   const light = resolve(a, { state: 'browse', appearance: 'light' });
   check('Aqua light 有 --vs-glass-card-light', (light.cssVars['--vs-glass-card-light'] || '').includes('linear-gradient'));
