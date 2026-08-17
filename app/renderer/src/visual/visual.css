@@ -369,21 +369,24 @@ body[data-vtheme="aurora"] .tile, body[data-vtheme="aurora"] .poster .cover { bo
     linear-gradient(rgba(0,0,0,var(--vs-aqua-brightness-black,0)), rgba(0,0,0,var(--vs-aqua-brightness-black,0)));
 }
 
-/* 海洋生物层 */
+/* 海洋生物层：critters（fish/bubble/plankton SVG）位于层内；粒子鲸鱼持有者居中于主列 */
 .vs-critters { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .vs-whale {
-  position: absolute; left: 50%; top: 52%;
+  position: absolute;
   transform: translate(-50%, -50%);
-  mix-blend-mode: screen; opacity: 0.9;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  opacity: 0.92;
 }
+.vs-whale[data-scheme="light"] { mix-blend-mode: multiply; }
+.vs-whale canvas { display: block; width: 100%; height: 100%; }
 .vs-critter {
   position: absolute; color: #7ea4df; opacity: 0.22;
-  font-size: 11px; line-height: 1; user-select: none;
 }
 .vs-critter[data-kind="fish"] { animation: vs-fish-swim 12s ease-in-out infinite; }
 .vs-critter[data-kind="fish-left"] { animation: vs-fish-swim-left 16s ease-in-out infinite; }
-.vs-critter[data-kind="bubble"] { color: #a9c6ef; opacity: 0; animation: vs-bubble-rise 9s ease-in infinite; font-size: 9px; }
-.vs-critter[data-kind="plankton"] { animation: vs-plankton 5s ease-in-out infinite; font-size: 8px; }
+.vs-critter[data-kind="bubble"] { color: #a9c6ef; opacity: 0; animation: vs-bubble-rise 9s ease-in infinite; }
+.vs-critter[data-kind="plankton"] { color: #7ea4df; animation: vs-plankton 5s ease-in-out infinite; }
 
 @keyframes vs-fish-swim {
   0% { transform: translate3d(0,0,0) rotate(-5deg); }
