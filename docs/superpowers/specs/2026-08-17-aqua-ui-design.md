@@ -219,3 +219,72 @@ docs/06-视觉主题系统设计.md  追加 Aqua 主题设计节
 - 不改架构核心：Video First 预算、三类强度独立、IPC 持久化边界均保留。
 - 不把 6 主题变成 6 个不同 App；Aqua 只作为默认主题与可选主题之一。
 - 不做 Aqua 之外的额外主题。
+
+---
+
+## 11. Revision 2 — Aqua 全量移植（2026-08-17 追加）
+
+**触发：** 用户提供 DSH-Transparent-UI-Plugin 完整编译产物（client.js 打包源码），要求 Aqua **完全参考**该实现，而非此前的自研简化近似；同时强调「浅色/暗色切换的字体颜色与背景必须相配，不能样式好看但看不清字」。
+
+**已确认决策（Revision 2）：**
+
+| # | 决策 | 结论 |
+|---|---|---|
+| 11.1 | 移植深度 | **全量移植**参考实现：真实 WebGL2 流体仿真（flow-map 双缓冲 + 点击涟漪）、粒子鲸鱼（SVG 亮度网格采样）、交互网格（弹簧点阵）、mica/compat 双模式、完整 token 调色板、内嵌 Space Grotesk 字体、**图像 + 视频壁纸（IndexedDB + File System Access）** |
+| 11.2 | 可读性 | **明暗双语义 token + 实机对比度验收**：明暗两套 token 完整定义文字/背景/描边/玻璃透明度分层；visual-test 新增 Aqua 对比度断言；实机 QA 对明暗×流体/壁纸逐一采样 |
+| 11.3 | 主题收敛 | 删除 6 个旧主题，`REGISTRY` 只留 Aqua；Preset 页签保留（官方 Aqua + 用户预设 CRUD）；VisualConsole 移除独立 Aqua 页签，参数归并到「外观 / 氛围」页签 |
+| 11.4 | 架构 | 不动 store/registry/resolver/controller/engines 结构骨架；各引擎升级为参考实现的忠实移植（算法对齐，选择器/持久化适配 Aurora） |
+
+**Schema 扩展（Revision 2，`aqua` 段补齐）：**
+
+```ts
+aqua: {
+  mode: 'mica' | 'compat',          // 新增：浮层玻璃卡 / 通用玻璃材质
+  backdrop: 'fluid' | 'wallpaper',
+  fluidHue: number; fluidDepth: number;
+  bgBrightness: number;
+  wallpaper: string;                 // dataURL | idb:<id> | fsa:<name>
+  wallpaperBlur: number; wallpaperFrost: number;
+  videoBlur: number; videoBrightness: number;   // 新增：视频壁纸
+  mesh: boolean;                     // 新增：交互网格
+  edgeFade: boolean; spotlight: boolean; press: boolean;
+  critters: boolean; whale: boolean;
+}
+```
+
+- blur/frost 由现有 `ui.blur` / `ui.glass` 承担（resolver 已映射 `--vs-glass-blur` 与 `--vs-frost = ui.glass*1.4`，与 DSH frost/50→1.4 同公式）。
+- `mode='compat'`：保持 Aurora 布局，仅通用玻璃材质（token 表面层透明化）；`mode='mica'`：悬浮毛玻璃卡（现有 Aqua CSS 体系）。
+- 壁纸三种形态：`dataURL`（图片，≤1920px JPEG .82 降采样）、`idb:<id>`（大视频存 IndexedDB）、`fsa:<name>`（File System Access 句柄持久化，Electron 支持时优先）。
+
+**引擎升级映射：**
+
+| 现有 | 升级为（忠实移植参考实现） |
+|---|---|
+| FluidEngine | WebGL2 flow-map 双缓冲仿真 + 鼠标速度/平滑 + 点击涟漪 + decay + distort/swirl 噪声 + 3 色 hue/depth 渐变；reduced-motion 渲染一帧静态 |
+| CrittersEngine | DSH fish SVG 剪影 + 气泡 + 浮游 + **粒子鲸鱼**（60×60 亮度网格采样、装配/尾摆/光照/指针推挤、additive+screen、30fps） |
+| MeshEngine（新） | 90px 弹簧点阵 + 指针排斥（r140）+ 线条拉伸 + idle 停帧 + IntersectionObserver 可见性 |
+| SpotlightEngine | spot-core 几何（visualRect/glassLocalRect）+ glow 180px + tilt perspective800 rotateX/Y 0.0175rad scale1.01 + MutationObserver overlay keeper |
+| EdgeFadeLayer | 保持（已对齐） |
+| wallpaper-store（新） | IndexedDB 视频 blob + File System Access 句柄 + `idb:`/`fsa:` 标记 |
+
+**调色板对齐（明暗双语义）：**
+
+- 暗色：bg `#0C121B`、surface `#111A27`/`#162130`/`#1C2A3D`、text `#EAF2FC`、secondary `#AFC3DC`、accent `#6E9BE8`、border `rgba(148,180,220,…)`、阴影蓝调。
+- 浅色：bg `#F4F8FD`、surface `#FFFFFF`/`#ECF2FA`、text `#13243E`、secondary `#40597A`、accent `#3F76D8`、border `rgba(19,45,83,…)`。
+- resolver 产出 dark+light 双令牌块，Appearance 切换即时生效；`--vs-glass-alpha` 浅色更实保证可读。
+
+**字体：** 内嵌 Space Grotesk Variable（参考包 data-URI woff2）@font-face 进 visual.css；拉丁/数字用它，CJK 回落 Microsoft YaHei（现有 --font 链）。
+
+**VisualConsole 归并（沿用确认）：**
+
+- 外观页签：mode（mica/compat）、玻璃模糊、磨砂度、流体色相/深度、背景亮度、背景源（流体/壁纸）、壁纸选择（图片+视频）、壁纸模糊/磨砂、视频模糊/亮度。
+- 氛围页签：边缘雾化、光标聚光、悬浮按压、海洋生物、交互网格、粒子鲸鱼开关。
+- Preset 页签保留（官方 Aqua + 用户预设 CRUD）。
+
+**可读性验收：**
+
+- visual-test 新增：Aqua dark/light 下 `--vs-text` vs `--vs-bg` 亮度差 ≥60（复用现有对比度逻辑）。
+- 实机 QA：明暗两套 × 流体/壁纸两种背景逐一采样验证文字可读。
+- resolver `--vs-glass-alpha` 浅色更实（`max(0.55, 0.90 - glass*0.22)`），深色 `max(0.16, 0.80 - glass*0.55)` 保持。此为现有逻辑，纳入验收。
+
+**不做（YAGNI）：** 不改 main.js IPC 结构（Aqua 参数走现有 visual.json）；不动 mpv/HDR/DLNA/播放逻辑；不加第三方依赖（WebGL2/FSA/IndexedDB 全原生）。
