@@ -1,7 +1,12 @@
 import type { AquaEngineParams } from '../types';
+import { isVideoWallpaper, loadVideoBlob, loadVideoHandle } from './wallpaper-store';
 
 /** FluidEngine — 忠实移植 deepseek aqua 的 WebGL2 双缓冲 flow-map 流体仿真（涟漪/30fps/DPR≤1.5）。 */
 const REDUCE = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+interface VideoWallpaperHandle extends FileSystemFileHandle {
+  queryPermission(descriptor?: { mode?: 'read' | 'readwrite' }): Promise<'granted' | 'denied' | 'prompt'>;
+}
 
 export function videoMaskPolygon(rect: { top: number; bottom: number; left: number; right: number }, w: number, h: number): string {
   const t = Math.round(rect.top), b = Math.round(rect.bottom), l = Math.round(rect.left), r = Math.round(rect.right);
@@ -240,6 +245,12 @@ export class FluidEngine {
   private lastStir = new WeakMap<Element, number>();
   private ripples = new Set<number>();
 
+  private video: HTMLVideoElement | null = null;
+  private videoActive = false;
+  private videoBlobId = '';
+  private videoToken = 0;
+  private videoURL = '';
+
   private flow = {
     prev: null as WebGLUniformLocation | null,
     mouse: null as WebGLUniformLocation | null,
@@ -280,6 +291,11 @@ export class FluidEngine {
     this.canvas.className = 'vs-fluid-canvas';
     this.wp = document.createElement('div');
     this.wp.className = 'vs-fluid-wallpaper';
+    this.video = document.createElement('video');
+    this.video.style.display = 'none';
+    this.video.setAttribute('playsinline', '');
+    this.video.setAttribute('preload', 'auto');
+    this.wp.appendChild(this.video);
     this.root.appendChild(this.canvas);
     this.root.appendChild(this.wp);
     container.appendChild(this.root);
@@ -290,6 +306,11 @@ export class FluidEngine {
   }
   unmount(): void {
     this.stop();
+    this.videoToken++;
+    this.videoBlobId = '';
+    this.videoActive = false;
+    if (this.video) { this.clearVideoSrc(); this.video.remove(); }
+    this.video = null;
     this.detachInteractions();
     window.removeEventListener('resize', this.onResize);
     document.removeEventListener('visibilitychange', this.onVis);
@@ -301,7 +322,13 @@ export class FluidEngine {
   }
 
   private onResize = () => { this.resize(); };
-  private onVis = () => { if (document.hidden) this.stop(); else if (this.cfg && this.cfg.enabled && !REDUCE) this.start(); };
+  private onVis = () => {
+    if (document.hidden) { this.stop(); this.pauseVideo(); }
+    else {
+      if (this.cfg && this.cfg.enabled && !REDUCE) this.start();
+      this.resumeVideo();
+    }
+  };
 
   private initGL(): void {
     const c = this.canvas;
@@ -458,8 +485,8 @@ export class FluidEngine {
     gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
   }
 
-  apply(p: AquaEngineParams | undefined): void {
-    if (!p || !p.enabled) { this.stop(); this.hide(); return; }
+  apply(p: AquaEngineParams | undefined, onPlayer: boolean): void {
+    if (!p || !p.enabled) { this.stop(); this.stopVideo(); this.hide(); return; }
     this.cfg = p;
     const dark = document.documentElement.dataset.theme !== 'light';
     const tones = fluidToneColors(dark, p.fluidHue, p.fluidDepth);
@@ -467,8 +494,8 @@ export class FluidEngine {
     this.color2 = hexToRgb(tones.color2);
     this.color3 = hexToRgb(tones.color3);
     this.show(p.backdrop === 'fluid');
-    if (p.backdrop === 'wallpaper') this.applyWallpaper(p);
-    else this.applyBrightness(p.bgBrightness);
+    if (p.backdrop === 'wallpaper') this.applyWallpaper(p, onPlayer);
+    else { this.applyBrightness(p.bgBrightness); this.stopVideo(); }
     if (p.backdrop === 'fluid') this.start();
     else this.stop();
   }
@@ -481,16 +508,115 @@ export class FluidEngine {
     this.wp.style.display = fluid ? 'none' : 'block';
   }
 
-  private applyWallpaper(p: AquaEngineParams): void {
+  private applyWallpaper(p: AquaEngineParams, onPlayer: boolean): void {
     const w = this.wp;
     if (!w) return;
+    const isVideo = isVideoWallpaper(p.wallpaper);
+    w.dataset.media = isVideo ? 'video' : 'image';
     let img = w.querySelector('img') as HTMLImageElement | null;
     if (!img) { img = document.createElement('img'); w.appendChild(img); }
     img.className = 'vs-fluid-wallpaper-img';
-    if (p.wallpaper) img.src = p.wallpaper; else img.removeAttribute('src');
+    if (p.wallpaper && !isVideo) img.src = p.wallpaper; else img.removeAttribute('src');
     w.style.setProperty('--vs-aqua-wallpaper-blur', `${p.wallpaperBlur}px`);
     w.style.setProperty('--vs-aqua-wallpaper-frost', String(p.wallpaperFrost / 100));
+    w.style.setProperty('--vs-aqua-video-blur', `${p.videoBlur}px`);
+    w.style.setProperty('--vs-aqua-video-dim', String(((100 - p.videoBrightness) / 100) * 0.65));
+    if (isVideo) this.applyVideo(p.wallpaper, onPlayer);
+    else this.stopVideo();
     this.applyBrightness(p.bgBrightness);
+  }
+
+  private applyVideo(wallpaper: string, onPlayer: boolean): void {
+    const video = this.video;
+    if (!video) return;
+    if (onPlayer) { this.stopVideo(); return; }
+    this.videoActive = true;
+    if (video.style.display === 'none') video.style.display = 'block';
+    if (wallpaper.startsWith('idb:')) {
+      const id = wallpaper.slice(4);
+      if (this.videoBlobId === id) { this.configureWallpaperVideo(video); return; }
+      this.videoBlobId = id;
+      const token = ++this.videoToken;
+      this.clearVideoSrc();
+      loadVideoBlob(id).then((blob) => {
+        if (token !== this.videoToken || !blob) return;
+        this.setVideoURL(URL.createObjectURL(blob));
+      });
+    } else if (wallpaper.startsWith('fsa:')) {
+      this.videoBlobId = '';
+      const token = ++this.videoToken;
+      this.clearVideoSrc();
+      loadVideoHandle().then((handle) => {
+        if (token !== this.videoToken || !handle) return;
+        (handle as VideoWallpaperHandle).queryPermission({ mode: 'read' }).then((state) => {
+          if (token !== this.videoToken || state !== 'granted') return;
+          handle.getFile().then((file) => {
+            if (token !== this.videoToken) return;
+            this.setVideoURL(URL.createObjectURL(file));
+          }).catch(() => {});
+        }).catch(() => {});
+      });
+    } else {
+      this.videoBlobId = '';
+      ++this.videoToken;
+      this.clearVideoSrc();
+      this.setVideoURL(wallpaper);
+    }
+  }
+
+  private configureWallpaperVideo(video: HTMLVideoElement): void {
+    video.loop = true;
+    if (REDUCE) return;
+    if (!video.paused) return;
+    video.play().catch(() => {
+      video.muted = true;
+      video.play().catch(() => {});
+    });
+  }
+
+  private setVideoURL(url: string): void {
+    const video = this.video;
+    if (!video) return;
+    this.revokeVideoURL();
+    this.videoURL = url;
+    video.src = url;
+    this.configureWallpaperVideo(video);
+  }
+
+  private clearVideoSrc(): void {
+    const video = this.video;
+    if (!video) return;
+    this.revokeVideoURL();
+    if (video.src) video.removeAttribute('src');
+    video.load();
+  }
+
+  private revokeVideoURL(): void {
+    if (this.videoURL && this.videoURL.startsWith('blob:')) {
+      URL.revokeObjectURL(this.videoURL);
+      this.videoURL = '';
+    }
+  }
+
+  private stopVideo(): void {
+    this.videoActive = false;
+    this.videoBlobId = '';
+    ++this.videoToken;
+    const video = this.video;
+    if (!video) return;
+    this.clearVideoSrc();
+    video.style.display = 'none';
+  }
+
+  private pauseVideo(): void {
+    const video = this.video;
+    if (video && !video.paused) video.pause();
+  }
+
+  private resumeVideo(): void {
+    if (!this.videoActive || REDUCE || document.hidden) return;
+    const video = this.video;
+    if (video && video.src && video.paused) this.configureWallpaperVideo(video);
   }
 
   private applyBrightness(bg: number): void {

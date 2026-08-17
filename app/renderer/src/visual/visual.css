@@ -360,6 +360,18 @@ body[data-vtheme="aurora"] .tile, body[data-vtheme="aurora"] .poster .cover { bo
   background: rgb(255 255 255 / var(--vs-aqua-wallpaper-frost, 0));
 }
 :root[data-theme="dark"] .vs-fluid-wallpaper::after { background: rgb(12 18 27 / var(--vs-aqua-wallpaper-frost, 0)); }
+.vs-fluid-wallpaper video {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; pointer-events: none;
+  filter: blur(var(--vs-aqua-video-blur, 0px));
+}
+.vs-fluid-wallpaper[data-media="video"]::after {
+  content: ""; position: absolute; inset: 0;
+  background: rgb(255 255 255 / calc(var(--vs-aqua-video-dim, 0.36) * 1.3));
+}
+:root[data-theme="dark"] .vs-fluid-wallpaper[data-media="video"]::after {
+  background: rgb(8 12 20 / var(--vs-aqua-video-dim, 0.36));
+}
 
 /* 亮度罩（brightness knob）：暗色压暗 / 浅色提亮 */
 .vs-fluid::after {

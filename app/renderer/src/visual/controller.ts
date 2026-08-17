@@ -160,7 +160,7 @@ function applyEngines(p: EngineParams, state: RouteState): void {
   edgeFade.apply(p.aqua, state === 'playback' || state === 'immersive');
   mesh.apply(p.aqua);
   spotlight.apply(p.aqua);
-  fluid.apply(p.aqua);
+  fluid.apply(p.aqua, state === 'playback' || state === 'immersive');
   const probe = PlaybackProbe.get();
   const aspect = probe.videoW && probe.videoH ? probe.videoW / probe.videoH : null;
   const winAspect = window.innerWidth / window.innerHeight;
