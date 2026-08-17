@@ -141,6 +141,8 @@ export class SpotlightEngine {
         glow.style.opacity = '1';
         this.current = el;
         if (this.press && r.width > 0 && r.height > 0) {
+          const st = this.settle.get(el);
+          if (st !== undefined) { clearTimeout(st); this.settle.delete(el); }
           const dx = Math.min(0.5, Math.max(-0.5, px / r.width - 0.5));
           const dy = Math.min(0.5, Math.max(-0.5, py / r.height - 0.5));
           el.style.transformOrigin = `${el.offsetWidth / 2}px ${el.offsetHeight / 2}px`;
@@ -163,14 +165,7 @@ export class SpotlightEngine {
     if (next === this.current) return;
     const prev = this.current;
     this.current = next;
-    if (prev !== null) {
-      prev.removeAttribute('data-vs-press');
-      prev.style.removeProperty('transform');
-      prev.style.removeProperty('transform-origin');
-      this.tilted.delete(prev);
-      const id = this.settle.get(prev);
-      if (id !== undefined) { clearTimeout(id); this.settle.delete(prev); }
-    }
+    if (prev !== null) this.easeBack(prev);
   };
 
   private hitSpot(): HTMLElement | null {
