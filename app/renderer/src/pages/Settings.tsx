@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Settings } from '../bridge.d';
 import { WindowControls, ResizeZones, dragHandler, useWindowDragRelease } from '../components/WindowChrome';
-import { VisualStore } from '../visual/store';
 import { VisualSystem } from '../visual/controller';
-import { useActiveTheme } from '../visual/useVisual';
 
 type Group = 'play' | 'video' | 'audio' | 'sub' | 'lib' | 'dlna' | 'ui';
 
@@ -37,8 +35,6 @@ export default function SettingsPage() {
   const [group, setGroup] = useState<Group>('play');
   const [shaderFiles, setShaderFiles] = useState<string[]>([]);
   const [shaderMsg, setShaderMsg] = useState<string | null>(null);
-  // 视觉主题选择以 VisualStore 为唯一 runtime source（订阅驱动，切换即同步高亮）
-  const activeTheme = useActiveTheme();
 
   useWindowDragRelease();
 
@@ -244,16 +240,7 @@ export default function SettingsPage() {
         {group === 'ui' && (
           <>
             <div className="srow">
-              <span>当前主题<small>（Visual System）</small></span>
-              <div className="seg">
-                {VisualStore.listPresets().map((t) => (
-                  <button key={t.id} className={activeTheme.activeThemeId === t.id ? 'on' : ''}
-                    onClick={() => VisualStore.apply(t.id)}>{t.name}</button>
-                ))}
-              </div>
-            </div>
-            <div className="srow">
-              <span>详细参数</span>
+              <span>当前主题<small>（Aqua · Visual System）</small></span>
               <button className="seg-action" onClick={() => VisualSystem.setConsoleOpen(true)}>打开 Visual Console</button>
             </div>
             <div className="srow">
