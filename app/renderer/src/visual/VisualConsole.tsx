@@ -84,7 +84,7 @@ const SWITCHES: Record<string, [string, string][]> = {
     ['aqua.edgeFade', '边缘雾化'],
     ['aqua.spotlight', '光标聚光'],
     ['aqua.press', '悬浮按压'],
-    ['aqua.critters', '海洋生物'],
+    ['aqua.critters', 'logo图标'],
     ['aqua.mesh', '交互网格'],
     ['aqua.whale', '粒子鲸鱼'],
   ],
