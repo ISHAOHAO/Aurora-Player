@@ -139,11 +139,12 @@ export class CrittersEngine {
   }
 
   apply(p: AquaEngineParams | undefined, onPlayer: boolean): void {
-    const show = !!(p && p.enabled && p.critters);
-    const showWhale = show && !!p?.whale && !onPlayer;
+    // 播放页 Video First：logo 鱼形/气泡/浮游生物整体隐藏，不盖在视频上；仅浏览态（首页/设置）显示
+    const show = !!(p && p.enabled && p.critters) && !onPlayer;
+    const showWhale = show && !!p?.whale;
     if (this.root) this.root.style.display = show ? 'block' : 'none';
     if (this.whale) this.whale.style.display = showWhale ? 'block' : 'none';
-    if (this.root) this.root.style.opacity = onPlayer ? '0.5' : '1';
+    if (this.root) this.root.style.opacity = '1';
     this.dark = document.documentElement.dataset.theme !== 'light';
     if (this.whale) this.whale.dataset.scheme = this.dark ? 'dark' : 'light';
     this.active = showWhale;

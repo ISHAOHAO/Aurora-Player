@@ -569,8 +569,37 @@ function readRecent() {
 
 function writeRecent() { /* no-op：写路径已并入 db.recentAdd/recentUpdatePosition */ }
 
+function notifyRecent() {
+  if (homeWin && !homeWin.isDestroyed()) homeWin.webContents.send('recent:updated');
+}
+
+/** 同目录封面 / 已生成的抽帧封面，未命中返回 null */
+function existingPosterFor(file) {
+  try {
+    const dir = path.dirname(file);
+    const base = path.basename(file).replace(/\.[^.]+$/, '');
+    const sp = findPoster(dir, base);
+    if (sp) return sp;
+  } catch {}
+  const gen = posterOutFor(file);
+  return fs.existsSync(gen) ? gen : null;
+}
+
 function addRecent(file) {
-  try { db.recentAdd(file, path.basename(file), Date.now()); } catch {}
+  const poster = existingPosterFor(file);
+  try { db.recentAdd(file, path.basename(file), Date.now(), poster); } catch {}
+  ensureRecentPoster(file);
+}
+
+/** 最近项无封面 → 后台抽帧生成，完成后更新库并推送渲染层刷新 */
+function ensureRecentPoster(file) {
+  if (existingPosterFor(file)) return;
+  if (/^https?:/i.test(file)) return;   // 网络流无法本地抽帧
+  queueCover(file, (p) => {
+    if (!p) return;
+    try { db.recentUpdatePoster(file, p); } catch {}
+    notifyRecent();
+  });
 }
 
 function updateRecentPosition(file, timePos, duration) {
@@ -857,36 +886,45 @@ function walkVideos(dir, depth = 0, out = []) {
 let coverQueue = [];
 let coverRunning = false;
 
-/** 无封面 → mpv 抽帧生成（8% 处一帧，jpg） */
-function queueCover(item) {
-  coverQueue.push(item);
+/** 封面产物路径（确定性：md5(path)） */
+function posterOutFor(file) {
+  return path.join(POSTER_DIR(), crypto.createHash('md5').update(file).digest('hex').slice(0, 12) + '.jpg');
+}
+
+/** 无封面 → mpv 抽帧生成（8% 处一帧，jpg；串行队列 + 20s 超时保护）
+    done(posterPath|null)：成功返回产物路径，失败返回 null（不中断队列）。
+    临时目录按条目独立建名，避免共享 _tmp 读到上一部视频的残留帧。 */
+function queueCover(file, done) {
+  coverQueue.push({ file, done });
   if (coverRunning) return;
   coverRunning = true;
   const next = () => {
     const it = coverQueue.shift();
     if (!it) { coverRunning = false; return; }
-    const out = path.join(POSTER_DIR(), crypto.createHash('md5').update(it.path).digest('hex').slice(0, 12) + '.jpg');
-    const tmpDir = path.join(POSTER_DIR(), '_tmp');
+    const out = posterOutFor(it.file);
+    const tmpDir = path.join(POSTER_DIR(), '_tmp', `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
     fs.mkdirSync(tmpDir, { recursive: true });
     const proc = spawn(MPV_EXE, [
       '--no-config', '--no-audio', '--no-sub', '--frames=1', '--start=8%',
+      '--hwdec=no',   // 强制软件解码：硬件解码帧经 --vo=image 下采可能出黑帧
       '--vo=image', '--vo-image-format=jpg', '--vo-image-jpeg-quality=82',
-      `--vo-image-outdir=${tmpDir}`, '--no-terminal', it.path,
+      `--vo-image-outdir=${tmpDir}`, '--no-terminal', it.file,
     ], { stdio: 'ignore' });
-    const done = () => {
+    const finished = () => {
+      let poster = null;
       try {
         const f = fs.readdirSync(tmpDir).filter((x) => x.endsWith('.jpg'))[0];
         if (f) {
           fs.renameSync(path.join(tmpDir, f), out);
-          it.poster = out;
-          saveLibrary();
-          notifyLibrary();
+          poster = out;
         }
       } catch {}
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      it.done(poster);
       next();
     };
-    proc.on('exit', done);
-    proc.on('error', done);
+    proc.on('exit', finished);
+    proc.on('error', finished);
     setTimeout(() => { try { proc.kill(); } catch {} }, 20000).unref?.();   // 单帧 20s 超时保护
   };
   next();
@@ -920,8 +958,14 @@ function scanLibrary() {
           specs: parseSpecs(path.basename(file), dir),
         };
         if (!item.poster) {
-          const gen = path.join(POSTER_DIR(), crypto.createHash('md5').update(file).digest('hex').slice(0, 12) + '.jpg');
-          if (fs.existsSync(gen)) item.poster = gen; else queueCover(item);
+          const gen = posterOutFor(file);
+          if (fs.existsSync(gen)) item.poster = gen;
+          else queueCover(file, (p) => {
+            if (!p) return;
+            item.poster = p;
+            saveLibrary();
+            notifyLibrary();
+          });
         }
         next.push(item);
       }

@@ -11,6 +11,8 @@ export interface RecentItem {
   at: number;
   position?: number;
   duration?: number;
+  /** 视频预览封面（同目录封面或抽帧生成），可能为 null */
+  poster?: string | null;
 }
 
 export interface PlayerStats {
@@ -200,6 +202,8 @@ export interface AuroraBridge {
   shaderSetDir: () => Promise<{ dir: string; files: string[] } | { error: string } | null>;
   shaderApply: (shaders: string[]) => Promise<{ ok: boolean; bad: { file: string; forbidden: string[] }[] }>;
   onLibraryUpdated: (cb: (items: LibraryItem[]) => void) => () => void;
+  /** 最近播放数据变更（封面抽帧完成等，回调后自行 getRecent 刷新） */
+  onRecentUpdated: (cb: () => void) => () => void;
   /** 主进程路由切换指令（nav:goto，值为 home/settings/player） */
   onNavigate: (cb: (route: string) => void) => () => void;
   /** 播放状态推送(播放会话期间 ~2Hz) */

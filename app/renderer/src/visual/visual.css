@@ -474,7 +474,13 @@ body[data-vtheme="aqua"] .top-info {
   transition: opacity 0.3s ease;
   z-index: -1;
 }
-[data-vs-spot] { position: relative; isolation: isolate; }
+/* 光标聚光：注入的 glow div
+   注意：position: relative 只补给流内卡片（topbar 用 sticky、浮层保持各自 absolute/fixed），
+   否则会覆盖 .win-float/.control-deck/.top-info 等绝对定位导致控件错位/跑到左边 */
+[data-vs-spot] { isolation: isolate; }
+[data-vs-spot]:not(.win-float):not(.top-info):not(.control-deck):not(.pop-menu):not(.console-drawer):not(.cast-toast):not(.topbar) {
+  position: relative;
+}
 [data-vs-press] { transition: transform 0.1s ease-out; }
 
 /* 滚动正文防糊（内容穿过玻璃边缘仍清晰） */

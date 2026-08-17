@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS play_history (
   name TEXT NOT NULL,
   at REAL NOT NULL,
   position REAL,
-  duration REAL
+  duration REAL,
+  poster TEXT
 );
 CREATE TABLE IF NOT EXISTS favorite (
   path TEXT PRIMARY KEY,
@@ -71,8 +72,21 @@ function open(dbPath) {
     console.error('[db] integrity_check:', integrity.integrity_check);
   }
   db.exec(TABLES);
+  ensurePlayHistoryPosterColumn();
   migrateJson(dbPath);
   return db;
+}
+
+/** 老库升级：play_history 增补 poster 列（D35 迁移后已有表无此列） */
+function ensurePlayHistoryPosterColumn() {
+  try {
+    const cols = db.prepare('PRAGMA table_info(play_history)').all();
+    if (!cols.some((c) => c.name === 'poster')) {
+      db.exec('ALTER TABLE play_history ADD COLUMN poster TEXT');
+    }
+  } catch (e) {
+    console.error('[db] ensure poster column error', e.message);
+  }
 }
 
 function get() {
@@ -158,12 +172,17 @@ function recentList() {
   return db.prepare('SELECT * FROM play_history ORDER BY at DESC LIMIT 100').all().map((r) => ({
     path: r.path, name: r.name, at: r.at,
     position: r.position ?? undefined, duration: r.duration ?? undefined,
+    poster: r.poster ?? null,
   }));
 }
 
-function recentAdd(file, name, at) {
+function recentAdd(file, name, at, poster) {
   db.prepare('DELETE FROM play_history WHERE path = ?').run(file);
-  db.prepare('INSERT INTO play_history (path,name,at) VALUES (?,?,?)').run(file, name, at);
+  db.prepare('INSERT INTO play_history (path,name,at,poster) VALUES (?,?,?,?)').run(file, name, at, poster ?? null);
+}
+
+function recentUpdatePoster(file, poster) {
+  db.prepare('UPDATE play_history SET poster = ? WHERE path = ?').run(poster, file);
 }
 
 function recentUpdatePosition(file, position, duration) {
@@ -231,7 +250,7 @@ function collectionCreate(name) {
 module.exports = {
   open, get,
   replaceMedia, allMedia, clearMedia,
-  recentList, recentAdd, recentUpdatePosition, recentClear,
+  recentList, recentAdd, recentUpdatePosition, recentUpdatePoster, recentClear,
   favoriteList, favoriteToggle, favoriteIsOn,
   playlistList, playlistCreate, playlistDelete, playlistAddItem, playlistItems,
   collectionList, collectionCreate,

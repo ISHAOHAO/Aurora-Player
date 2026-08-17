@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { CSSProperties } from 'react';
 import type { DlnaState, LibraryItem, NasEntry, RecentItem } from '../bridge.d';
 import { WindowControls, ResizeZones, dragHandler, useWindowDragRelease } from '../components/WindowChrome';
 import { PlaybackProbe } from '../visual/playback';
@@ -16,6 +17,15 @@ function specLabel(it: LibraryItem): string {
   const s = it.specs;
   if (!s) return '';
   return [s.res, s.hdr, s.sub].filter(Boolean).join(' · ');
+}
+
+/** 预览封面背景样式（无封面返回 undefined，走渐变占位） */
+function posterStyle(p?: string | null): CSSProperties | undefined {
+  if (!p) return undefined;
+  return {
+    backgroundImage: `url("file:///${p.replace(/\\/g, '/')}")`,
+    backgroundSize: 'cover', backgroundPosition: 'center',
+  };
 }
 
 function toggleTheme() {
@@ -53,6 +63,9 @@ export default function Home() {
     window.aurora.getLibrary().then(setLibrary);
     return window.aurora.onLibraryUpdated(setLibrary);
   }, []);
+
+  // 最近播放封面抽帧完成（主进程 recent:updated）→ 拉最新列表
+  useEffect(() => window.aurora.onRecentUpdated(() => window.aurora.getRecent().then(setRecent)), []);
 
   // 视觉系统：把当前海报作为 cover palette 光源（Home 无播放帧）
   useEffect(() => {
@@ -171,10 +184,13 @@ export default function Home() {
                 <div className="rail">
                   {recentMatches.map((it, i) => (
                     <button key={it.path} className="poster" onClick={() => window.aurora.openPath(it.path, it.position)}>
-                      <div className="cover" style={{
+                      <div className="cover" style={posterStyle(it.poster) ?? {
                         background: `linear-gradient(170deg, hsl(${220 + i * 24}, 14%, var(--cv-hi)) 0%, hsl(${220 + i * 24}, 16%, var(--cv-lo)) 75%)`,
                       }}>
-                        <span className="ext">{it.name.split('.').pop()?.toUpperCase()}</span>
+                        {!it.poster && <span className="ext">{it.name.split('.').pop()?.toUpperCase()}</span>}
+                        {it.position != null && it.duration ? (
+                          <div className="prog"><i style={{ width: `${(it.position / it.duration) * 100}%` }} /></div>
+                        ) : null}
                       </div>
                       <div className="name">{it.name}</div>
                       <div className="info timecode">{fmtRemain(it) || new Date(it.at).toLocaleDateString()}</div>
@@ -190,7 +206,11 @@ export default function Home() {
         {head ? (
           <section className="hero">
             <button className="hero-card" onClick={() => window.aurora.openPath(head.path, head.position)}>
-              <div className="art"><span className="fname">{head.name}</span></div>
+              <div className="art">
+                {head.poster && <img className="art-img" src={`file:///${head.poster.replace(/\\/g, '/')}`} alt="" draggable={false} />}
+                {head.poster && <span className="art-shade" />}
+                <span className="fname">{head.name}</span>
+              </div>
               {head.position != null && head.duration ? (
                 <div className="progress"><i style={{ width: `${(head.position / head.duration) * 100}%` }} /></div>
               ) : null}
@@ -252,10 +272,10 @@ export default function Home() {
             <div className="rail">
               {recent.slice(0, 10).map((it, i) => (
                 <button key={it.path} className="poster" onClick={() => window.aurora.openPath(it.path, it.position)}>
-                  <div className="cover" style={{
+                  <div className="cover" style={posterStyle(it.poster) ?? {
                     background: `linear-gradient(170deg, hsl(${220 + i * 24}, 14%, var(--cv-hi)) 0%, hsl(${220 + i * 24}, 16%, var(--cv-lo)) 75%)`,
                   }}>
-                    <span className="ext">{it.name.split('.').pop()?.toUpperCase()}</span>
+                    {!it.poster && <span className="ext">{it.name.split('.').pop()?.toUpperCase()}</span>}
                     {it.position != null && it.duration ? (
                       <div className="prog"><i style={{ width: `${(it.position / it.duration) * 100}%` }} /></div>
                     ) : null}

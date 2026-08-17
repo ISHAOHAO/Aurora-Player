@@ -104,6 +104,11 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* 应用外壳（类原生窗口）：隐藏滚动条（滚轮/触摸仍可滚动），overscroll 不回流页面 */
+* { scrollbar-width: none; }
+*::-webkit-scrollbar { width: 0; height: 0; display: none; }
+html, body { overscroll-behavior: none; }
+
 html, body, #root { height: 100%; }
 
 body {
@@ -249,12 +254,15 @@ body.player[data-vtheme="aqua"] .top-info {
   padding: 0 48px 32px;
   max-width: 1440px; margin: 0 auto;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .topbar {
+  position: sticky; top: 0; z-index: 20;
   height: 56px; margin: 0 -48px 28px; padding: 0 48px;
   display: flex; align-items: center; gap: 16px;
   border-bottom: 1px solid var(--hairline);
+  background: var(--bg-base);
   flex-shrink: 0;
 }
 .logo { display: flex; align-items: center; gap: 9px; font-size: 17px; font-weight: 600; letter-spacing: .02em; }
@@ -312,6 +320,18 @@ body.player[data-vtheme="aqua"] .top-info {
   color: var(--cv-fname); font-size: 15px; font-weight: 600;
   text-shadow: 0 1px 4px rgba(0,0,0,.8);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* 最近播放真实帧预览：铺满 + 底部压暗让文件名可读 */
+.hero-card .art-img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover;
+}
+.hero-card .art-shade {
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, transparent 52%, rgba(0, 0, 0, .65) 100%);
+}
+:root[data-theme="light"] .hero-card .art-shade {
+  background: linear-gradient(180deg, transparent 52%, rgba(255, 255, 255, .55) 100%);
 }
 :root[data-theme="light"] .hero-card .art .fname { text-shadow: 0 1px 3px rgba(255,255,255,.7); }
 /* 浅色主题：封面占位用亮调渐变，不再是黑盒子 */

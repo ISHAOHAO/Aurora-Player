@@ -15,4 +15,4 @@ app/scripts/shot*.png
 .workbuddy/
 agent/
 skills-lock.json
-# prototype/
+prototype/

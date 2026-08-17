@@ -61,11 +61,12 @@ export class MeshEngine {
   }
 
   apply(p: AquaEngineParams | undefined, onPlayer: boolean): void {
-    const show = !!(p && p.enabled && p.mesh);
+    // 播放页 Video First：交互网格不盖在视频上，仅浏览态（首页/设置）显示
+    const show = !!(p && p.enabled && p.mesh) && !onPlayer;
     this.on = show;
     if (this.root) {
       this.root.style.display = show ? 'block' : 'none';
-      this.root.style.opacity = show && onPlayer ? '0.5' : '1';
+      this.root.style.opacity = '1';
     }
     if (!show) { this.stop(); return; }
     if (REDUCE || COARSE) { this.renderStatic(); return; }

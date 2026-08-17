@@ -44,6 +44,11 @@ contextBridge.exposeInMainWorld('aurora', {
     ipcRenderer.on('library:updated', listener);
     return () => ipcRenderer.removeListener('library:updated', listener);
   },
+  onRecentUpdated: (cb) => {
+    const listener = () => cb();
+    ipcRenderer.on('recent:updated', listener);
+    return () => ipcRenderer.removeListener('recent:updated', listener);
+  },
   onNavigate: (cb) => {
     const listener = (_e, route) => cb(route);
     ipcRenderer.on('nav:goto', listener);
