@@ -329,6 +329,10 @@ h1, h2, h3,
 .vs-critter {
   position: absolute; color: #7ea4df; opacity: 0.22;
 }
+.vs-critter[data-kind="fish"], .vs-critter[data-kind="fish-left"] { opacity: 0.5; }
+.vs-critter[data-kind="fish"] img, .vs-critter[data-kind="fish-left"] img {
+  display: block; object-fit: contain;
+}
 .vs-critter[data-kind="fish"] { animation: vs-fish-swim 12s ease-in-out infinite; }
 .vs-critter[data-kind="fish-left"] { animation: vs-fish-swim-left 16s ease-in-out infinite; }
 .vs-critter[data-kind="bubble"] { color: #a9c6ef; opacity: 0; animation: vs-bubble-rise 9s ease-in infinite; }

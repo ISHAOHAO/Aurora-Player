@@ -1,5 +1,13 @@
 # Aurora Player
 
+<p align="center">
+  <img src="assets/Aurora_Player_logo.png" width="96" height="96" alt="Aurora Player logo">
+</p>
+
+<p align="center">
+  <img src="assets/Aurora_Player_banner.png" alt="Aurora Player banner">
+</p>
+
 > Win10/Win11 沉浸式视频播放器 —— 本地 / 网络 / DLNA 全能播放，HDR 画质决策链，媒体中心。
 
 Aurora Player 是一款面向 Windows 11 的桌面视频播放器，以「电影镜头、粒子视觉与舞台」为设计语言，在 mpv 解码内核之上构建了完整的沉浸式体验：自绘控制层、HDR 画质决策、DLNA 投屏（MediaRenderer）、本地媒体库海报墙与 NAS/SMB 在线浏览。

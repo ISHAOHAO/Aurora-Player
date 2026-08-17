@@ -1,4 +1,5 @@
 import type { AquaEngineParams } from '../types';
+import fishLogoUrl from '../../../../../assets/Aurora_Player_logo.png';
 
 /** CrittersEngine — 海洋生物层：鱼 SVG 剪影 + 气泡 + 浮游生物 + 粒子鲸鱼（60×60 亮度网格采样）。 */
 const FISH_PATH = 'M22.9168 1.43018C22.6713 1.31018 22.5658 1.53918 22.4223 1.65519C22.3733 1.69269 22.3318 1.74169 '
@@ -74,22 +75,22 @@ function smoothstep(a: number, b: number, t: number): number {
   return x * x * (3 - 2 * x);
 }
 
-function critter(kind: string, viewBox: string, width: number, style: string, body: string): string {
-  return `<svg class="vs-critter" data-kind="${kind}" viewBox="${viewBox}" width="${width}" `
-    + `style="${style}" aria-hidden="true">${body}</svg>`;
+function critter(kind: string, width: number, style: string, body: string): string {
+  return `<span class="vs-critter" data-kind="${kind}" style="${style}" aria-hidden="true">${body}</span>`;
 }
 
 function fish(kind: string, style: string, width: number): string {
-  return critter(kind, '0 0 23.16 17.04', width, style, `<path d="${FISH_PATH}" fill="currentColor"/>`);
+  return critter(kind, width, style, `<img src="${fishLogoUrl}" alt="" width="${width}" height="${Math.round(width * 1.003)}"/>`);
 }
 
 function bubble(style: string, size: number): string {
-  return critter('bubble', '0 0 8 8', size, style,
-    '<circle cx="4" cy="4" r="3" fill="none" stroke="currentColor" stroke-width="1"/>');
+  return critter('bubble', size, style,
+    '<svg viewBox="0 0 8 8" width="' + size + '" height="' + size + '"><circle cx="4" cy="4" r="3" fill="none" stroke="currentColor" stroke-width="1"/></svg>');
 }
 
 function plankton(style: string): string {
-  return critter('plankton', '0 0 3 3', 3, style, '<circle cx="1.5" cy="1.5" r="1.5" fill="currentColor"/>');
+  return critter('plankton', 3, style,
+    '<svg viewBox="0 0 3 3" width="3" height="3"><circle cx="1.5" cy="1.5" r="1.5" fill="currentColor"/></svg>');
 }
 
 const CRITTERS = [
