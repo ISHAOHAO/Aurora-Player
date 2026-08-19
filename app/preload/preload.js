@@ -69,6 +69,16 @@ contextBridge.exposeInMainWorld('aurora', {
   toggleMaximize: () => ipcRenderer.send('win:maximize-toggle'),
   closeWindow: () => ipcRenderer.send('win:close'),
 
+  // —— 自动更新 ——
+  updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateInstallNow: () => ipcRenderer.invoke('update:install-now'),
+  onUpdateStatus: (cb) => {
+    const listener = (_e, status) => cb(status);
+    ipcRenderer.on('update:status', listener);
+    return () => ipcRenderer.removeListener('update:status', listener);
+  },
+  getAppVersion: () => ipcRenderer.invoke('app:get-version'),
+
   onStatus: (cb) => {
     const listener = (_e, status) => cb(status);
     ipcRenderer.on('mpv:status', listener);

@@ -1,7 +1,8 @@
 {
   "name": "aurora-player",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
+  "author": "is-haohao",
   "license": "GPL-3.0-or-later",
   "description": "Aurora Player — Win11 沉浸式视频播放器",
   "main": "main/main.js",
@@ -9,7 +10,10 @@
     "build": "vite build renderer",
     "start": "electron .",
     "dev": "npm run build && electron .",
-    "test:visual": "node scripts/visual-test.js"
+    "test:visual": "node scripts/visual-test.js",
+    "dist": "electron-builder --win nsis msi --publish never",
+    "dist:win": "electron-builder --win nsis msi --publish never",
+    "release:manifest": "node scripts/publish-gitee.js"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",
@@ -20,7 +24,59 @@
     "vite": "^8.2.1"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
+  },
+  "build": {
+    "appId": "com.ishaohao.auroraplayer",
+    "productName": "Aurora Player",
+    "artifactName": "AuroraPlayer-Setup-${version}.${ext}",
+    "copyright": "Copyright © 2026 is-haohao",
+    "directories": {
+      "output": "../release",
+      "buildResources": "build-resources"
+    },
+    "files": [
+      "main/**/*",
+      "preload/**/*",
+      "renderer/dist/**/*",
+      "dlna/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      { "from": "runtime/mpv", "to": "runtime/mpv" }
+    ],
+    "npmRebuild": false,
+    "win": {
+      "icon": "build-resources/icon.ico",
+      "target": [
+        { "target": "nsis", "arch": "x64" },
+        { "target": "msi", "arch": "x64" }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "uninstallDisplayName": "Aurora Player",
+      "differentialPackage": true,
+      "shortcutName": "Aurora Player",
+      "include": "build-resources/installer.nsh"
+    },
+    "msi": {
+      "oneClick": false,
+      "perMachine": false,
+      "shortcutName": "Aurora Player",
+      "warningsAsErrors": false,
+      "additionalLightArgs": [
+        "-sval"
+      ]
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://gitee.com/is-haohao/Aurora-Player/raw/main/update/"
+    }
   }
 }

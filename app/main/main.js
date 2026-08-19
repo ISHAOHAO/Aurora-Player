@@ -12,6 +12,9 @@ const path = require('path');
 const fs = require('fs');
 const { decide } = require('./hdr');
 const db = require('./db');
+const updater = require('./updater');
+
+ipcMain.handle('app:get-version', () => app.getVersion());
 
 const MPV_EXE = path.join(__dirname, '..', '..', 'runtime', 'mpv', 'mpv.exe');
 const PIPE_PATH = '\\\\.\\pipe\\aurora-mpv';
@@ -1386,7 +1389,11 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => { showHome(); });
+  app.on('second-instance', (_e, argv) => {
+    const f = argv.slice(2).find((a) => fs.existsSync(a) && fs.statSync(a).isFile());
+    if (f) startPlayback(path.resolve(f));
+    else showHome();
+  });
 
   app.whenReady().then(() => {
     if (!fs.existsSync(MPV_EXE)) {
@@ -1402,6 +1409,7 @@ if (!gotLock) {
     buildMenu();
     createTray();
     startDlna();
+    updater.init();
     if ((settings.libraryFolders || []).length) scanLibrary();
     // 命令行带视频文件路径时直接播放（文件关联/拖放 exe 的基础）
     const fileArg = process.argv.slice(2).find((a) => fs.existsSync(a) && fs.statSync(a).isFile());

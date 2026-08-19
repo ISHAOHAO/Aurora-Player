@@ -141,6 +141,17 @@ export interface PlayError {
   attempted: string;
 }
 
+/** 自动更新状态推送 */
+export interface UpdateStatus {
+  state: 'checking' | 'available' | 'latest' | 'downloading' | 'downloaded' | 'error' | 'idle';
+  version?: string;
+  percent?: number;
+  bytesPerSecond?: number;
+  transferred?: number;
+  total?: number;
+  message?: string;
+}
+
 /** 视觉系统持久化结构（userData/visual.json） */
 export interface VisualFile {
   version: 1;
@@ -239,6 +250,14 @@ export interface AuroraBridge {
   minimizeWindow: () => void;
   toggleMaximize: () => void;
   closeWindow: () => void;
+  /** 自动更新：手动检查 */
+  updateCheck: () => Promise<{ ok: boolean; updateAvailable?: boolean; error?: string }>;
+  /** 自动更新：立即退出并安装已下载的更新 */
+  updateInstallNow: () => Promise<{ ok: boolean }>;
+  /** 自动更新：状态推送（检查中/下载进度/已下载待重启/错误） */
+  onUpdateStatus: (cb: (s: UpdateStatus) => void) => () => void;
+  /** 应用版本号 */
+  getAppVersion: () => Promise<string>;
 }
 
 declare global {

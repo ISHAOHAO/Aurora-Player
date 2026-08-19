@@ -1,0 +1,8 @@
+version: 1.0.0
+files:
+  - url: https://gitee.com/is-haohao/Aurora-Player/releases/download/v1.0.0/AuroraPlayer-Setup-1.0.0.exe
+    sha512: p9jUH9lOVBZzAT9iwZ7tavC5OqstVdcB4bSZYY0fNc0E2muDeU+snfLmiB0wki0BFS2EUf7x6WQdH6id9ja4yA==
+    size: 138049124
+path: https://gitee.com/is-haohao/Aurora-Player/releases/download/v1.0.0/AuroraPlayer-Setup-1.0.0.exe
+sha512: p9jUH9lOVBZzAT9iwZ7tavC5OqstVdcB4bSZYY0fNc0E2muDeU+snfLmiB0wki0BFS2EUf7x6WQdH6id9ja4yA==
+releaseDate: '2026-08-19T09:25:43.508Z'

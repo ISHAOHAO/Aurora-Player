@@ -3,10 +3,10 @@ import type { Settings } from '../bridge.d';
 import { WindowControls, ResizeZones, dragHandler, useWindowDragRelease } from '../components/WindowChrome';
 import { VisualSystem } from '../visual/controller';
 
-type Group = 'play' | 'video' | 'audio' | 'sub' | 'lib' | 'dlna' | 'ui';
+type Group = 'play' | 'video' | 'audio' | 'sub' | 'lib' | 'dlna' | 'ui' | 'about';
 
 const GROUPS: [Group, string][] = [
-  ['play', '播放'], ['video', '视频'], ['audio', '音频'], ['sub', '字幕'], ['lib', '媒体库'], ['dlna', 'DLNA'], ['ui', 'UI'],
+  ['play', '播放'], ['video', '视频'], ['audio', '音频'], ['sub', '字幕'], ['lib', '媒体库'], ['dlna', 'DLNA'], ['ui', 'UI'], ['about', '关于'],
 ];
 
 /** 一次性动作按钮：点击执行 → 短暂显示"已完成" */
@@ -17,6 +17,71 @@ function ActionButton({ label, doneLabel, action }: { label: string; doneLabel: 
       onClick={async () => { await action(); setDone(true); setTimeout(() => setDone(false), 1500); }}>
       {done ? doneLabel : label}
     </button>
+  );
+}
+
+/** 关于 / 自动更新分组 */
+function AboutGroup() {
+  const [version, setVersion] = useState<string>('…');
+  const [status, setStatus] = useState<UpdateStatus>({ state: 'idle' });
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    window.aurora.getAppVersion().then(setVersion);
+    const off = window.aurora.onUpdateStatus(setStatus);
+    return off;
+  }, []);
+
+  const check = async () => {
+    setChecking(true);
+    const r = await window.aurora.updateCheck();
+    setChecking(false);
+    if (!r.ok) setStatus({ state: 'error', message: r.error });
+  };
+
+  const statusText: Record<string, string> = {
+    idle: '未检查',
+    checking: '正在检查更新…',
+    available: `发现新版本 ${status.version ?? ''}`,
+    latest: '已是最新版本',
+    downloading: `正在下载更新 ${status.percent ?? 0}%`,
+    downloaded: `新版本 ${status.version ?? ''} 已下载，重启后安装`,
+    error: `更新检查失败：${status.message ?? ''}`,
+  };
+
+  return (
+    <>
+      <div className="srow">
+        <span>当前版本</span>
+        <span className="val timecode">{version}</span>
+      </div>
+      <div className="srow">
+        <span>更新状态</span>
+        <span className="val">{statusText[status.state] ?? status.state}</span>
+      </div>
+      {status.state === 'downloading' && (
+        <div className="srow">
+          <span>下载进度</span>
+          <div style={{ minWidth: 160, height: 6, background: 'rgba(255,255,255,.12)', borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{ width: `${status.percent ?? 0}%`, height: '100%', background: '#4aa8ff' }} />
+          </div>
+        </div>
+      )}
+      <div className="srow">
+        <span>检查更新</span>
+        <ActionButton label="检查更新" doneLabel="已检查" action={check} />
+        {checking && <span className="val">检查中…</span>}
+      </div>
+      {status.state === 'downloaded' && (
+        <div className="srow">
+          <span>安装更新</span>
+          <button className="seg-action" onClick={() => window.aurora.updateInstallNow()}>立即重启安装</button>
+        </div>
+      )}
+      <div className="srow">
+        <span className="val">未签名版本：更新后首次启动可能弹 SmartScreen「未知发布者」，点「仍要运行」即可继续。</span>
+      </div>
+    </>
   );
 }
 
@@ -251,6 +316,9 @@ export default function SettingsPage() {
               </div>
             </div>
           </>
+        )}
+        {group === 'about' && (
+          <AboutGroup />
         )}
         </div>
       </div>

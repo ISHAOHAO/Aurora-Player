@@ -16,3 +16,10 @@ app/scripts/shot*.png
 agent/
 skills-lock.json
 prototype/
+
+# 打包产物与本地构建缓存（安装包本体上传到 Gitee 发行版，不入库）
+release/
+.eb-deps/
+.eb-cache/
+.npm-cache/
+app/runtime/
