@@ -25,11 +25,15 @@ Function AssocPageCreate
   ${If} $0 == error
     Abort
   ${EndIf}
-  ${NSD_CreateLabel} 0 28u 100% 24u "是否将常见视频文件类型绑定到 Aurora Player？$\n取消勾选则安装后不会修改任何系统文件关联。"
+  ${NSD_CreateLabel} 0 28u 100% 24u "是否将 Aurora Player 添加到视频文件的打开方式？$\n取消勾选则安装后不会修改任何系统文件关联。"
   Pop $0
-  ${NSD_CreateCheckbox} 0 56u 100% 12u "关联视频文件（.mp4 .mkv .avi .mov .flv .wmv .webm .ts .m2ts .mpeg .mpg）"
+  ${NSD_CreateCheckbox} 0 56u 100% 12u "添加打开方式（.mp4 .mkv .avi .mov .flv .wmv .webm .ts .m2ts .mpeg .mpg）"
   Pop $AssocCheckbox
-  ${NSD_SetState} $AssocCheckbox ${BST_CHECKED}
+  ReadRegStr $AssocChecked HKCU "Software\Aurora Player" "OpenWith"
+  ${If} $AssocChecked == ""
+    StrCpy $AssocChecked ${BST_CHECKED}
+  ${EndIf}
+  ${NSD_SetState} $AssocCheckbox $AssocChecked
   nsDialogs::Show
 FunctionEnd
 
@@ -37,71 +41,58 @@ Function AssocPageLeave
   ${NSD_GetState} $AssocCheckbox $AssocChecked
 FunctionEnd
 
-; 安装段：用户勾选后才注册
-!macro customInstall
-  ${If} $AssocChecked == ${BST_CHECKED}
-    WriteRegStr HKCU "Software\Classes\AuroraPlayer.Video\DefaultIcon" "" "$INSTDIR\Aurora Player.exe,0"
-    WriteRegStr HKCU "Software\Classes\AuroraPlayer.Video\shell\open\command" "" ' "$INSTDIR\Aurora Player.exe" "%1"'
 
-    WriteRegStr HKCU "Software\Classes\.mp4" "" "AuroraPlayer.Video"
-    WriteRegStr HKCU "Software\Classes\.mkv" "" "AuroraPlayer.Video"
-    WriteRegStr HKCU "Software\Classes\.avi" "" "AuroraPlayer.Video"
-    WriteRegStr HKCU "Software\Classes\.mov" "" "AuroraPlayer.Video"
-    WriteRegStr HKCU "Software\Classes\.flv" "" "AuroraPlayer.Video"
-    WriteRegStr HKCU "Software\Classes\.wmv" "" "AuroraPlayer.Video"
-    WriteRegStr HKCU "Software\Classes\.webm" "" "AuroraPlayer.Video"
-    WriteRegStr HKCU "Software\Classes\.ts" "" "AuroraPlayer.Video"
-    WriteRegStr HKCU "Software\Classes\.m2ts" "" "AuroraPlayer.Video"
-    WriteRegStr HKCU "Software\Classes\.mpeg" "" "AuroraPlayer.Video"
-    WriteRegStr HKCU "Software\Classes\.mpg" "" "AuroraPlayer.Video"
+; Only values owned by Aurora are added/removed. Never delete extension keys.
+!macro RegisterVideoExtension EXT
+  WriteRegStr HKCU "Software\Classes\${EXT}\OpenWithProgids" "AuroraPlayer.Video" ""
+!macroend
+!macro RemoveVideoExtension EXT
+  DeleteRegValue HKCU "Software\Classes\${EXT}\OpenWithProgids" "AuroraPlayer.Video"
+  ; Migrate legacy installs which overwrote the extension default; keep all other values/subkeys.
+  ReadRegStr $0 HKCU "Software\Classes\${EXT}" ""
+  ${If} $0 == "AuroraPlayer.Video"
+    DeleteRegValue HKCU "Software\Classes\${EXT}" ""
   ${EndIf}
 !macroend
-
-; 卸载段：仅清理本程序写入的关联（确认仍指向本 ProgID 才删，避免误删其他程序）
+!macro customInstall
+  ${If} $AssocChecked == ""
+    ReadRegStr $AssocChecked HKCU "Software\Aurora Player" "OpenWith"
+  ${EndIf}
+  ${If} $AssocChecked == ${BST_CHECKED}
+    WriteRegStr HKCU "Software\Aurora Player" "OpenWith" "$AssocChecked"
+    WriteRegStr HKCU "Software\Classes\AuroraPlayer.Video\DefaultIcon" "" "$INSTDIR\Aurora Player.exe,0"
+    WriteRegStr HKCU "Software\Classes\AuroraPlayer.Video\shell\open\command" "" '"$INSTDIR\Aurora Player.exe" "%1"'
+    !insertmacro RegisterVideoExtension ".mp4"
+    !insertmacro RegisterVideoExtension ".mkv"
+    !insertmacro RegisterVideoExtension ".avi"
+    !insertmacro RegisterVideoExtension ".mov"
+    !insertmacro RegisterVideoExtension ".flv"
+    !insertmacro RegisterVideoExtension ".wmv"
+    !insertmacro RegisterVideoExtension ".webm"
+    !insertmacro RegisterVideoExtension ".ts"
+    !insertmacro RegisterVideoExtension ".m2ts"
+    !insertmacro RegisterVideoExtension ".mpeg"
+    !insertmacro RegisterVideoExtension ".mpg"
+  ${Else}
+    WriteRegStr HKCU "Software\Aurora Player" "OpenWith" "0"
+  ${EndIf}
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+!macroend
 !macro customUnInstall
-  ReadRegStr $0 HKCU "Software\Classes\.mp4" ""
-  ${If} $0 == "AuroraPlayer.Video"
-    DeleteRegKey HKCU "Software\Classes\.mp4"
-  ${EndIf}
-  ReadRegStr $0 HKCU "Software\Classes\.mkv" ""
-  ${If} $0 == "AuroraPlayer.Video"
-    DeleteRegKey HKCU "Software\Classes\.mkv"
-  ${EndIf}
-  ReadRegStr $0 HKCU "Software\Classes\.avi" ""
-  ${If} $0 == "AuroraPlayer.Video"
-    DeleteRegKey HKCU "Software\Classes\.avi"
-  ${EndIf}
-  ReadRegStr $0 HKCU "Software\Classes\.mov" ""
-  ${If} $0 == "AuroraPlayer.Video"
-    DeleteRegKey HKCU "Software\Classes\.mov"
-  ${EndIf}
-  ReadRegStr $0 HKCU "Software\Classes\.flv" ""
-  ${If} $0 == "AuroraPlayer.Video"
-    DeleteRegKey HKCU "Software\Classes\.flv"
-  ${EndIf}
-  ReadRegStr $0 HKCU "Software\Classes\.wmv" ""
-  ${If} $0 == "AuroraPlayer.Video"
-    DeleteRegKey HKCU "Software\Classes\.wmv"
-  ${EndIf}
-  ReadRegStr $0 HKCU "Software\Classes\.webm" ""
-  ${If} $0 == "AuroraPlayer.Video"
-    DeleteRegKey HKCU "Software\Classes\.webm"
-  ${EndIf}
-  ReadRegStr $0 HKCU "Software\Classes\.ts" ""
-  ${If} $0 == "AuroraPlayer.Video"
-    DeleteRegKey HKCU "Software\Classes\.ts"
-  ${EndIf}
-  ReadRegStr $0 HKCU "Software\Classes\.m2ts" ""
-  ${If} $0 == "AuroraPlayer.Video"
-    DeleteRegKey HKCU "Software\Classes\.m2ts"
-  ${EndIf}
-  ReadRegStr $0 HKCU "Software\Classes\.mpeg" ""
-  ${If} $0 == "AuroraPlayer.Video"
-    DeleteRegKey HKCU "Software\Classes\.mpeg"
-  ${EndIf}
-  ReadRegStr $0 HKCU "Software\Classes\.mpg" ""
-  ${If} $0 == "AuroraPlayer.Video"
-    DeleteRegKey HKCU "Software\Classes\.mpg"
-  ${EndIf}
+  ${IfNot} ${isUpdated}
+  !insertmacro RemoveVideoExtension ".mp4"
+  !insertmacro RemoveVideoExtension ".mkv"
+  !insertmacro RemoveVideoExtension ".avi"
+  !insertmacro RemoveVideoExtension ".mov"
+  !insertmacro RemoveVideoExtension ".flv"
+  !insertmacro RemoveVideoExtension ".wmv"
+  !insertmacro RemoveVideoExtension ".webm"
+  !insertmacro RemoveVideoExtension ".ts"
+  !insertmacro RemoveVideoExtension ".m2ts"
+  !insertmacro RemoveVideoExtension ".mpeg"
+  !insertmacro RemoveVideoExtension ".mpg"
   DeleteRegKey HKCU "Software\Classes\AuroraPlayer.Video"
+  DeleteRegValue HKCU "Software\Aurora Player" "OpenWith"
+  ${EndIf}
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 !macroend

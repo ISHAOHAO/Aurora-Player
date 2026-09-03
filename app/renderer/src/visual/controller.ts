@@ -27,6 +27,7 @@ import { EdgeFadeLayer } from './engines/EdgeFadeLayer';
 import { MeshEngine } from './engines/MeshEngine';
 
 let root: HTMLDivElement | null = null;
+let sceneMounted = false;
 let styleEl: HTMLStyleElement | null = null;
 let backdropEl: HTMLDivElement | null = null;
 const background = new BackgroundEngine();
@@ -46,6 +47,7 @@ let presentation: 'normal' | 'immersive' = 'normal';
 let consoleOpen = false;
 let disposed = true;
 let refresher = 0;
+let refreshRevision = 0;
 let unsubStore: (() => void) | null = null;
 let unsubPlay: (() => void) | null = null;
 let unsubAppearance: (() => void) | null = null;
@@ -104,8 +106,12 @@ function onPointer(e: PointerEvent): void {
 }
 
 function refresh(): void {
+  const revision = ++refreshRevision;
   clearTimeout(refresher);
+  // 路由切换时同步拆除图层，不能等待主题防抖或淡出，否则透明窗会露出动画。
+  if (!disposed) syncScene();
   refresher = window.setTimeout(() => {
+    if (disposed) return;
     const probe = PlaybackProbe.get();
     const theme = VisualStore.getActiveTheme();
     const route = routeOf();
@@ -119,17 +125,10 @@ function refresh(): void {
     document.body.dataset.presentation = presentation;
     document.body.dataset.vtheme = VisualStore.activeThemeId;
 
-    const useFrame = route === 'player';
     const coverWanted = theme.scene.mode === 'cover' || theme.scene.cover.follow;
-    if (useFrame) {
-      lighting.setThumbTime(probe.time);
-      if (probe.fileId) {
-        lighting.requestPalette({ kind: 'frame', fileId: probe.fileId, posterUrl: null }, (p) => {
-          lastCover = p; resolveAll(theme, state); emit();
-        });
-      }
-    } else if (coverWanted && probe.coverUrl) {
+    if (route !== 'player' && coverWanted && probe.coverUrl) {
       lighting.requestPalette({ kind: 'cover', fileId: probe.coverUrl, posterUrl: probe.coverUrl }, (p) => {
+        if (disposed || revision !== refreshRevision) return;
         lastCover = p; resolveAll(theme, state); emit();
       });
     }
@@ -150,6 +149,7 @@ function resolveAll(theme: VisualTheme, state: RouteState): void {
 }
 
 function applyEngines(p: EngineParams, state: RouteState): void {
+  if (!sceneMounted) return;
   background.apply(p.scene);
   atmosphere.apply({ grain: p.grain, vignette: p.vignette, bloom: p.bloom }, p.motion.transition);
   lighting.apply(p.light, p.motion.transition);
@@ -180,9 +180,12 @@ function applyEngines(p: EngineParams, state: RouteState): void {
 }
 
 /* ---------- 生命周期 ---------- */
-export function initVisualSystem(): void {
-  if (!disposed) return;
-  disposed = false;
+function syncScene(): void {
+  const onPlayer = routeOf() === 'player';
+  document.body.dataset.videoFirst = String(onPlayer);
+  if (onPlayer) { unmountScene(); return; }
+  if (sceneMounted) return;
+  sceneMounted = true;
   root = document.createElement('div');
   root.id = 'vs-atmosphere';
   document.body.appendChild(root);
@@ -196,6 +199,29 @@ export function initVisualSystem(): void {
   edgeFade.mount();
   spotlight.mount();
   mesh.mount(root);
+}
+
+function unmountScene(): void {
+  if (!sceneMounted) return;
+  sceneMounted = false;
+  background.unmount();
+  atmosphere.unmount();
+  lighting.unmount();
+  particles.unmount();
+  motion.destroy();
+  motion.attach(null, null);
+  fluid.unmount();
+  critters.unmount();
+  spotlight.unmount();
+  edgeFade.unmount();
+  mesh.unmount();
+  root?.remove(); root = null;
+}
+
+export function initVisualSystem(): void {
+  if (!disposed) return;
+  disposed = false;
+  syncScene();
 
   AppearanceProbe.init();
   unsubStore = VisualStore.on(refresh);
@@ -217,22 +243,15 @@ export function initVisualSystem(): void {
 export function destroyVisualSystem(): void {
   if (disposed) return;
   disposed = true;
+  refreshRevision++;
+  clearTimeout(refresher);
   unsubStore?.(); unsubStore = null;
   unsubPlay?.(); unsubPlay = null;
   unsubAppearance?.(); unsubAppearance = null;
   window.removeEventListener('hashchange', refresh);
   window.removeEventListener('pointermove', onPointer);
-  background.unmount();
-  atmosphere.unmount();
-  lighting.unmount();
-  particles.unmount();
-  motion.destroy();
-  fluid.unmount();
-  critters.unmount();
-  spotlight.unmount();
-  edgeFade.unmount();
-  mesh.unmount();
-  root?.remove(); root = null;
+  unmountScene();
+  delete document.body.dataset.videoFirst;
   backdropEl?.remove(); backdropEl = null;
   delete document.documentElement.dataset.vsAquaMode;
   if (styleEl) { styleEl.remove(); styleEl = null; }

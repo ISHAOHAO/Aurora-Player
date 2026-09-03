@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PlayError, PlayerMeta, PlayerStatus, Track } from '../bridge.d';
 import { PlaybackProbe } from '../visual/playback';
+import VolumeControl from '../components/VolumeControl';
 
 const IDLE_MS = 3000; // 规范 §3.2：静止 3 秒隐藏控制层
 
@@ -418,11 +419,15 @@ export default function Player() {
   const [playErr, setPlayErr] = useState<PlayError | null>(null);
   const [errDetail, setErrDetail] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [volumeInteracting, setVolumeInteracting] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => window.aurora.onStatus(setStatus), []);
+  useEffect(() => window.aurora.onStatus((next) => {
+    setStatus(previous => ({ ...next, stats: next.stats ?? previous?.stats }));
+    if (typeof next.fullscreen === 'boolean') setFullscreen(next.fullscreen);
+  }), []);
   useEffect(() => window.aurora.onMeta(setMeta), []);
   useEffect(() => window.aurora.onFullscreen(setFullscreen), []);
   useEffect(() => window.aurora.onPlayError((e) => {
@@ -476,7 +481,7 @@ export default function Player() {
 
   /* ----- 自动隐藏（播放中 3s 无操作；暂停/菜单/抽屉打开时常驻） ----- */
   const paused = status?.pause ?? true;
-  const pinned = paused || menu !== null || drawer || ctxMenu !== null || playErr !== null;
+  const pinned = paused || menu !== null || drawer || ctxMenu !== null || playErr !== null || volumeInteracting;
 
   const wake = useCallback(() => {
     setIdle(false);
@@ -499,6 +504,7 @@ export default function Player() {
   /* ----- 键盘转发 ----- */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLElement && e.target.closest('input, select, textarea, [contenteditable="true"]')) return;
       if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
         // 快照（D31）：原始视频帧
         e.preventDefault();
@@ -709,23 +715,8 @@ export default function Player() {
 
           <div className="time timecode"><b>{fmt(pos)}</b> / {fmt(dur)}</div>
 
-          <div className="volume">
-            <button className="icon-btn" title={volLocked ? '已锁定' : '静音 (M)'} disabled={volLocked} onClick={() => window.aurora.mpv('cycle', 'mute')}>
-              {status?.mute || status?.volume === 0 ? (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor" stroke="none"/><path d="M22 9l-6 6M16 9l6 6"/></svg>
-              ) : (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor" stroke="none"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.4 5.6a9 9 0 0 1 0 12.8"/></svg>
-              )}
-            </button>
-            <div className="vol-track" onClick={(e) => {
-              if (volLocked) return;
-              const rect = e.currentTarget.getBoundingClientRect();
-              const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-              window.aurora.mpv('set_property', 'volume', Math.round(frac * 100));
-            }}>
-              <i style={{ width: `${status?.mute ? 0 : (status?.volume ?? 0)}%` }} />
-            </div>
-          </div>
+          <VolumeControl volume={status?.volume ?? 0} mute={status?.mute ?? false}
+            disabled={volLocked || !status || status.idle} onInteractionChange={setVolumeInteracting} />
 
           <div className="right">
             <button className="icon-btn" title="字幕轨" onClick={() => setMenu(menu === 'sub' ? null : 'sub')}>

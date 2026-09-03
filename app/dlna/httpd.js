@@ -7,19 +7,7 @@ const net = require('net');
 const crypto = require('crypto');
 const X = require('./xml');
 
-/** 防 SSRF（规格 §7）：仅允许 RFC1918/回环/链路本地 IP；域名（NAS 主机名）放行并记录 */
-function assertLanUrl(uri) {
-  let u;
-  try { u = new URL(uri); } catch { return false; }
-  const host = u.hostname.replace(/^\[|\]$/g, '');
-  if (net.isIP(host)) {
-    // 云元数据端点（AWS/GCP/Azure 等 169.254.169.254）是经典 SSRF 目标，必须拒绝；
-    // 其余链路本地 169.254.x（APIPA 网段，NAS 自组网场景）放行
-    if (host === '169.254.169.254') return false;
-    return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|169\.254\.|::1$|fe80:)/i.test(host);
-  }
-  return true; // 域名：局域网主机名场景，放行
-}
+const { normalize, isLan, resolveLan, pinnedRequest, createMediaGateway } = require('./lan-network');
 
 const PROTOCOL_INFO_SINK = [
   'http-get:*:video/mp4:*', 'http-get:*:video/x-matroska:*', 'http-get:*:video/webm:*',
@@ -40,6 +28,9 @@ const parseTime = (str) => {
 };
 
 function startHttpd({ cfg, state, sendCmd, log, recordSession }) {
+  const media = createMediaGateway();
+  let loadSequence = 0;
+  let nextSequence = 0;
   const subscribers = new Map(); // sid -> {service, callbacks[], seq, timer, fails}
   const icons = { '/icon48.png': X.makeIcon(48), '/icon120.png': X.makeIcon(120) };
 
@@ -47,11 +38,16 @@ function startHttpd({ cfg, state, sendCmd, log, recordSession }) {
 
   const actions = {
     /* ----- AVTransport ----- */
-    SetAVTransportURI(args, req) {
+    async SetAVTransportURI(args, req) {
       const uri = (args.CurrentURI || '').trim();
       if (!uri) throw fault(714, 'empty URI');
       if (!/^https?:\/\//i.test(uri)) throw fault(714, 'scheme not allowed'); // 防 SSRF：禁 file/smb 等
-      if (!assertLanUrl(uri)) throw fault(714, 'SSRF guard: non-LAN address rejected');
+      const sequence = ++loadSequence;
+      nextSequence++;
+      let playbackUri;
+      try { playbackUri = await media.register(uri, 'current', cfg.port, () => sequence === loadSequence); } catch { throw fault(714, 'LAN URI rejected'); }
+      if (sequence !== loadSequence) throw fault(701, 'superseded request');
+      state.nextUri = null; state.nextPlaybackUri = null; state.nextTitle = null; state.nextMetaRaw = null;
       state.metaRaw = args.CurrentURIMetaData || '';
       const meta = X.parseDidl(state.metaRaw);
       state.uri = uri;
@@ -60,17 +56,21 @@ function startHttpd({ cfg, state, sendCmd, log, recordSession }) {
       state.state = 'STOPPED';
       state.pos = 0; state.dur = meta.duration ? parseTime(meta.duration) : null;
       state.cp = req.socket.remoteAddress;
-      sendCmd({ cmd: 'load', uri, title: state.title, cp: state.cp });
+      sendCmd({ cmd: 'load', uri, playbackUri, title: state.title, cp: state.cp });
       log('SetAVTransportURI', state.cp, uri);
       recordSession?.({ event: 'set_uri', cp: state.cp, uri, title: state.title, result: 'ok' });
       emitAvt();
       return {};
     },
-    SetNextAVTransportURI(args, req) {   // D17：预载下一首（当前曲目结束时自动续播）
+    async SetNextAVTransportURI(args, req) {   // D17：预载下一首（当前曲目结束时自动续播）
       const uri = (args.NextURI || '').trim();
       if (!uri) throw fault(714, 'empty NextURI');
       if (!/^https?:\/\//i.test(uri)) throw fault(714, 'scheme not allowed');
-      if (!assertLanUrl(uri)) throw fault(714, 'SSRF guard: non-LAN address rejected');
+      const sequence = ++nextSequence;
+      let playbackUri;
+      try { playbackUri = await media.register(uri, 'next', cfg.port, () => sequence === nextSequence); } catch { throw fault(714, 'LAN URI rejected'); }
+      if (sequence !== nextSequence) throw fault(701, 'superseded request');
+      state.nextPlaybackUri = playbackUri;
       state.nextMetaRaw = args.NextURIMetaData || '';
       const meta = X.parseDidl(state.nextMetaRaw);
       state.nextUri = uri;
@@ -91,6 +91,9 @@ function startHttpd({ cfg, state, sendCmd, log, recordSession }) {
       return {};
     },
     Stop() {
+      loadSequence++;
+      nextSequence++;
+      state.nextUri = null; state.nextPlaybackUri = null;
       sendCmd({ cmd: 'stop' });
       state.state = 'STOPPED'; state.pos = 0;
       log('Stop', state.cp || '-', state.uri || '-');
@@ -218,85 +221,95 @@ function startHttpd({ cfg, state, sendCmd, log, recordSession }) {
     state.nextUri = null; state.nextTitle = null; state.nextMetaRaw = null; state.nextCp = null;
     state.state = 'STOPPED';
     state.pos = 0; state.dur = state.meta.duration ? parseTime(state.meta.duration) : null;
-    sendCmd({ cmd: 'load', uri: next, title: state.title, cp: state.cp });
+    media.promote(state.nextPlaybackUri);
+    sendCmd({ cmd: 'load', uri: next, playbackUri: state.nextPlaybackUri, title: state.title, cp: state.cp });
+    state.nextPlaybackUri = null;
     log('自动续播', state.cp, next);
     recordSession?.({ event: 'advance', cp: state.cp, uri: next, result: 'ok' });
     emitAvt();
     return true;
   }
 
-  function postNotify(urlStr, body, sid, sub, service) {
-    let u;
-    try { u = new URL(urlStr); } catch { return; }
-    const req = http.request({
-      hostname: u.hostname, port: u.port || 80, path: u.pathname + u.search,
-      method: 'NOTIFY',
-      headers: {
-        'CONTENT-TYPE': 'text/xml; charset="utf-8"',
-        NT: 'upnp:event', NTS: 'upnp:propchange',
-        SID: sid, SEQ: String(sub.seq),
-        'CONTENT-LENGTH': Buffer.byteLength(body),
-      },
-      timeout: 5000,
-    }, (res) => { res.resume(); sub.fails = 0; });
-    req.on('error', () => {
-      sub.fails++;
-      if (sub.fails >= 3) { subscribers.delete(sid); log('订阅清理(不可达)', sid, ''); } // 规格 §6
-    });
-    req.on('timeout', () => req.destroy());
-    req.end(body);
-    sub.seq++;
+  function removeSubscription(sid) {
+    const sub = subscribers.get(sid);
+    if (sub) { clearTimeout(sub.timer); sub.request?.destroy(); }
+    subscribers.delete(sid);
+  }
+  function postNotify(urlStr, body, sid, sub) {
+    // One coalesced snapshot per subscriber; at most 32 subscriptions and requests total.
+    sub.latest = body;
+    if (sub.sending || !subscribers.has(sid)) return;
+    sub.sending = true;
+    const payload = sub.latest; sub.latest = null;
+    const sequence = sub.seq;
+    sub.seq = sequence >= 4294967295 ? 1 : sequence + 1;
+    let finished = false;
+    const done = success => {
+      if (finished) return; finished = true;
+      sub.sending = false; sub.request = null;
+      sub.fails = success ? 0 : sub.fails + 1;
+      if (sub.fails >= 3) { removeSubscription(sid); return; }
+      if (sub.latest) postNotify(urlStr, sub.latest, sid, sub);
+    };
+    resolveLan(urlStr, { peer: sub.peer }).then(target => {
+      if (!subscribers.has(sid)) { done(false); return; }
+      const request = pinnedRequest(target, { method: 'NOTIFY', headers: {
+        'CONTENT-TYPE': 'text/xml; charset="utf-8"', NT: 'upnp:event', NTS: 'upnp:propchange',
+        SID: sid, SEQ: String(sequence), 'CONTENT-LENGTH': Buffer.byteLength(payload),
+      } }, response => { response.resume(); done(response.statusCode >= 200 && response.statusCode < 300); });
+      sub.request = request;
+      request.once('error', () => done(false)); request.end(payload);
+    }).catch(() => done(false));
   }
 
-  function handleSubscribe(req, res, service) {
-    if (req.method === 'UNSUBSCRIBE') {
-      const sid = req.headers.sid;
-      if (sid && subscribers.has(sid)) { subscribers.delete(sid); res.writeHead(200); res.end(); }
-      else { res.writeHead(412); res.end(); }
-      return;
-    }
+  async function handleSubscribe(req, res, service) {
+    const sid = req.headers.sid;
     const cbHeader = req.headers.callback;
     const nt = req.headers.nt;
-    if (!cbHeader || nt !== 'upnp:event') { res.writeHead(412); res.end(); return; }
-    const sid = req.headers.sid;
-    if (sid) { // 续订
+    const peer = normalize(req.socket.remoteAddress);
+    if (sid || req.method === 'UNSUBSCRIBE') {
       const sub = subscribers.get(sid);
-      if (!sub) { res.writeHead(412); res.end(); return; }
-      renew(sub);
-      res.writeHead(200, { SID: sid, TIMEOUT: 'Second-1800' });
-      res.end();
-      return;
+      if (!sub || cbHeader || nt || sub.service !== service || sub.peer !== peer) { res.writeHead(412); res.end(); return; }
+      if (req.method === 'UNSUBSCRIBE') { removeSubscription(sid); res.writeHead(200); res.end(); return; }
+      renew(sub); res.writeHead(200, { SID: sid, TIMEOUT: 'Second-1800' }); res.end(); return;
     }
-    const callbacks = [...cbHeader.matchAll(/<([^>]+)>/g)].map((m) => m[1]);
-    if (!callbacks.length) { res.writeHead(412); res.end(); return; }
-    const newSid = `uuid:${crypto.randomUUID()}`;
-    const sub = { service, callbacks, seq: 0, fails: 0, timer: null };
-    renew(sub);
-    subscribers.set(newSid, sub);
-    res.writeHead(200, { SID: newSid, TIMEOUT: 'Second-1800' });
-    res.end();
-    // 初始 NOTIFY（携带当前状态快照）
+    if (!cbHeader || nt !== 'upnp:event' || subscribers.size >= 32) { res.writeHead(412); res.end(); return; }
+    const callbacks = [...cbHeader.matchAll(/<([^>]+)>/g)].map(m => m[1]);
+    if (callbacks.length !== 1) { res.writeHead(412); res.end(); return; }
+    try { await resolveLan(callbacks[0], { peer }); } catch { res.writeHead(412); res.end(); return; }
+    if (subscribers.size >= 32 || res.destroyed) { res.writeHead(412); res.end(); return; }
+    const newSid = 'uuid:' + crypto.randomUUID();
+    const sub = { service, callbacks, peer, seq: 0, fails: 0, timer: null, sending: false, latest: null };
+    renew(sub); subscribers.set(newSid, sub);
+    res.writeHead(200, { SID: newSid, TIMEOUT: 'Second-1800' }); res.end();
     setTimeout(() => {
-      const lastChange = service === 'avt'
+      if (!subscribers.has(newSid)) return;
+      const change = service === 'avt'
         ? X.lastChangeAvt({ ...state, posStr: fmtTime(state.pos), durStr: fmtTime(state.dur), actions: actions.GetCurrentTransportActions().Actions })
         : X.lastChangeRc({ volume: Math.round(state.volume ?? 100), mute: state.mute });
-      const body = X.genaNotify(newSid, sub.seq, service, lastChange);
-      for (const cb of sub.callbacks) postNotify(cb, body, newSid, sub, service);
-    }, 50);
+      postNotify(callbacks[0], X.genaNotify(newSid, 0, service, change), newSid, sub);
+    }, 50).unref?.();
   }
 
   function renew(sub) {
     clearTimeout(sub.timer);
     sub.timer = setTimeout(() => {
-      for (const [sid, s] of subscribers) if (s === sub) subscribers.delete(sid);
+      for (const [sid, s] of subscribers) if (s === sub) removeSubscription(sid);
     }, 1830_000); // 1800s + 30s 宽限
     sub.timer.unref();
   }
 
   /* ---------------- HTTP 路由 ---------------- */
 
+  let activeRequests = 0;
   const server = http.createServer((req, res) => {
-    const url = new URL(req.url, 'http://x');
+    if (activeRequests >= 64) { res.writeHead(503); res.end(); return; }
+    activeRequests++;
+    res.once('close', () => activeRequests--);
+    if (!isLan(req.socket.remoteAddress)) { res.writeHead(403); res.end(); return; }
+    if (req.url.startsWith('/media/')) { media.serve(req, res).catch(() => { if (!res.headersSent) res.writeHead(502); res.end(); }); return; }
+    let url;
+    try { url = new URL(req.url, 'http://x'); } catch { res.writeHead(400); res.end(); return; }
     const p = url.pathname;
 
     const xmlOut = (body, code = 200) => {
@@ -318,21 +331,21 @@ function startHttpd({ cfg, state, sendCmd, log, recordSession }) {
     if (req.method === 'SUBSCRIBE' || req.method === 'UNSUBSCRIBE') {
       const svc = { '/evt/avtransport': 'avt', '/evt/avt': 'avt', '/evt/renderingcontrol': 'rc', '/evt/rc': 'rc', '/evt/connectionmanager': 'cm', '/evt/cm': 'cm' }[p];
       if (svc === 'cm') { res.writeHead(412); res.end(); return; } // CM 无事件变量
-      if (svc) return handleSubscribe(req, res, svc);
+      if (svc) { handleSubscribe(req, res, svc).catch(() => { if (!res.headersSent) res.writeHead(500); res.end(); }); return; }
     }
 
     if (req.method === 'POST' && p.startsWith('/ctrl/')) {
       const service = { '/ctrl/avtransport': 'AVTransport', '/ctrl/avt': 'AVTransport', '/ctrl/renderingcontrol': 'RenderingControl', '/ctrl/rc': 'RenderingControl', '/ctrl/connectionmanager': 'ConnectionManager', '/ctrl/cm': 'ConnectionManager' }[p];
       let body = '';
       req.on('data', (c) => { body += c; if (body.length > 1e6) req.destroy(); });
-      req.on('end', () => {
+      req.on('end', async () => {
         if (!service) { res.writeHead(404); return res.end(); }
         if (X.rejectUnsafe(body)) return xmlOut(X.soapFault(401, 'DTD/ENTITY forbidden'), 500);
         const action = X.soapAction(body);
-        const fn = action && actions[action];
+        const fn = action && Object.hasOwn(actions, action) && actions[action];
         if (!fn) return xmlOut(X.soapFault(401, `Invalid Action: ${action || '?'}`), 500);
         try {
-          const out = fn(X.soapArgs(body, action), req);
+          const out = await fn(X.soapArgs(body, action), req);
           xmlOut(X.soapResp(action, service, out));
         } catch (e) {
           if (e && e.upnpCode) xmlOut(X.soapFault(e.upnpCode, e.desc), 500);
@@ -345,12 +358,18 @@ function startHttpd({ cfg, state, sendCmd, log, recordSession }) {
     res.writeHead(404); res.end();
   });
 
-  return new Promise((resolve) => {
+  server.requestTimeout = 15000;
+  server.headersTimeout = 10000;
+  server.on('close', () => { media.close(); for (const sid of subscribers.keys()) removeSubscription(sid); for (const timer of Object.values(emitDebounce)) clearTimeout(timer); });
+  return new Promise((resolve, reject) => {
     server.on('error', (e) => {
-      if (e.code === 'EADDRINUSE' && cfg.port < 53300) { cfg.port++; server.listen(cfg.port); }
-      else throw e;
+      if (e.code === 'EADDRINUSE' && cfg.port < 53300) { cfg.port++; server.listen(cfg.port, '0.0.0.0'); }
+      else reject(e);
     });
-    server.listen(cfg.port, () => resolve({ server, port: cfg.port, emitAvt, emitRc, advanceNext }));
+    server.listen(cfg.port, cfg.host || '0.0.0.0', () => {
+      cfg.port = server.address().port;
+      resolve({ server, port: cfg.port, emitAvt, emitRc, advanceNext });
+    });
   });
 }
 

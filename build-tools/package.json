@@ -1,0 +1,8 @@
+{
+  "name": "aurora-build-tools",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "electron-builder": "26.15.3"
+  }
+}

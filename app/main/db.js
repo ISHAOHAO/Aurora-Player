@@ -67,6 +67,7 @@ function open(dbPath) {
   db = new DatabaseSync(dbPath);
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA foreign_keys = ON;');
+  db.exec('PRAGMA busy_timeout = 5000;');
   const integrity = db.prepare('PRAGMA integrity_check').get();
   if (integrity && integrity.integrity_check !== 'ok') {
     console.error('[db] integrity_check:', integrity.integrity_check);
@@ -108,30 +109,35 @@ function migrateJson(dbPath) {
       const ins = db.prepare(`INSERT OR REPLACE INTO media
         (path,name,title,year,season,episode,size,mtime,poster,specs_res,specs_hdr,specs_sub)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
-      const tx = db.exec ? null : null;
-      db.exec('BEGIN');
+      transaction(() => {
       for (const it of items) {
         ins.run(it.path, it.name, it.title, it.year ?? null, it.season ?? null, it.episode ?? null,
           it.size ?? 0, it.mtime ?? 0, it.poster ?? null,
           it.specs?.res ?? null, it.specs?.hdr ?? null, it.specs?.sub ?? null);
       }
-      db.exec('COMMIT');
+      });
       fs.renameSync(lib, lib + '.bak');
     }
     const recCount = db.prepare('SELECT COUNT(*) c FROM play_history').get().c;
     if (recCount === 0 && fs.existsSync(recent)) {
       const items = JSON.parse(fs.readFileSync(recent, 'utf8'));
       const ins = db.prepare('INSERT OR REPLACE INTO play_history (path,name,at,position,duration) VALUES (?,?,?,?,?)');
-      db.exec('BEGIN');
+      transaction(() => {
       for (const it of items) {
         ins.run(it.path, it.name, it.at, it.position ?? null, it.duration ?? null);
       }
-      db.exec('COMMIT');
+      });
       fs.renameSync(recent, recent + '.bak');
     }
   } catch (e) {
     console.error('[db] migrate error', e.message);
   }
+}
+
+function transaction(work) {
+  db.exec('BEGIN IMMEDIATE');
+  try { const result = work(); db.exec('COMMIT'); return result; }
+  catch (error) { try { db.exec('ROLLBACK'); } catch (rollback) { console.error('[db] rollback failed', rollback.message); } throw error; }
 }
 
 /* ---------------- media ---------------- */
@@ -140,17 +146,38 @@ function replaceMedia(items) {
   const ins = db.prepare(`INSERT OR REPLACE INTO media
     (path,name,title,year,season,episode,size,mtime,poster,specs_res,specs_hdr,specs_sub)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
-  db.exec('BEGIN');
+  transaction(() => {
+  db.exec('DELETE FROM media');
   for (const it of items) {
     ins.run(it.path, it.name, it.title, it.year ?? null, it.season ?? null, it.episode ?? null,
       it.size ?? 0, it.mtime ?? 0, it.poster ?? null,
       it.specs?.res ?? null, it.specs?.hdr ?? null, it.specs?.sub ?? null);
   }
-  db.exec('COMMIT');
+  });
 }
 
 function allMedia() {
   return db.prepare('SELECT * FROM media ORDER BY mtime DESC').all().map(rowToMedia);
+}
+
+/** Reconcile a completed scan. Runs in the scan worker; preserve newer cover updates. */
+function syncMedia(items) {
+  return transaction(() => {
+    const previous = new Map(allMedia().map(item => [item.path, item]));
+    const keep = new Set(items.map(item => item.path));
+    const remove = db.prepare('DELETE FROM media WHERE path = ?');
+    const insert = db.prepare(`INSERT OR REPLACE INTO media
+      (path,name,title,year,season,episode,size,mtime,poster,specs_res,specs_hdr,specs_sub)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+    for (const file of previous.keys()) if (!keep.has(file)) remove.run(file);
+    for (const item of items) {
+      const old = previous.get(item.path);
+      if (old?.mtime === item.mtime && old?.size === item.size && old.poster) item.poster = old.poster;
+      if (old && JSON.stringify(old) === JSON.stringify(item)) continue;
+      insert.run(item.path, item.name, item.title, item.year ?? null, item.season ?? null, item.episode ?? null,
+        item.size ?? 0, item.mtime ?? 0, item.poster ?? null, item.specs?.res ?? null, item.specs?.hdr ?? null, item.specs?.sub ?? null);
+    }
+  });
 }
 
 function rowToMedia(r) {
@@ -177,10 +204,17 @@ function recentList() {
 }
 
 function recentAdd(file, name, at, poster) {
-  db.prepare('DELETE FROM play_history WHERE path = ?').run(file);
-  db.prepare('INSERT INTO play_history (path,name,at,poster) VALUES (?,?,?,?)').run(file, name, at, poster ?? null);
+  db.prepare(`INSERT INTO play_history (path,name,at,poster) VALUES (?,?,?,?)
+    ON CONFLICT(path) DO UPDATE SET name=excluded.name, at=excluded.at,
+    poster=COALESCE(excluded.poster, play_history.poster)`).run(file, name, at, poster ?? null);
 }
 
+function recentGet(file) {
+  return db.prepare('SELECT * FROM play_history WHERE path = ?').get(file);
+}
+function mediaUpdatePoster(file, poster) {
+  db.prepare('UPDATE media SET poster = ? WHERE path = ?').run(poster, file);
+}
 function recentUpdatePoster(file, poster) {
   db.prepare('UPDATE play_history SET poster = ? WHERE path = ?').run(poster, file);
 }
@@ -249,8 +283,8 @@ function collectionCreate(name) {
 
 module.exports = {
   open, get,
-  replaceMedia, allMedia, clearMedia,
-  recentList, recentAdd, recentUpdatePosition, recentUpdatePoster, recentClear,
+  replaceMedia, syncMedia, allMedia, clearMedia,
+  recentGet, mediaUpdatePoster, recentList, recentAdd, recentUpdatePosition, recentUpdatePoster, recentClear,
   favoriteList, favoriteToggle, favoriteIsOn,
   playlistList, playlistCreate, playlistDelete, playlistAddItem, playlistItems,
   collectionList, collectionCreate,

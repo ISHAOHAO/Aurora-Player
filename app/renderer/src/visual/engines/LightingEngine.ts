@@ -26,7 +26,10 @@ export class LightingEngine {
 
   // 光源缓存
   private coverCache = new Map<string, PaletteColors | null>();
-  private frameCache = new Map<string, PaletteColors | null>();
+  private frameCache = new Map<string, { palette: PaletteColors | null; at: number }>();
+  private sourceKey = '';
+  private generation = 0;
+  private sampling = false;
   private current: PaletteColors | null = null;
   private pending: PaletteColors | null = null;
   private lastThumbAt = 0;
@@ -45,7 +48,7 @@ export class LightingEngine {
     }
     container.appendChild(this.container);
   }
-  unmount(): void { this.container?.remove(); this.container = null; this.blobs = []; }
+  unmount(): void { this.generation++; this.sourceKey = ''; this.sampling = false; this.frameCache.clear(); this.coverCache.clear(); this.onPaletteCb = null; this.container?.remove(); this.container = null; this.blobs = []; }
 
   onPalette(cb: (p: PaletteColors | null) => void): void { this.onPaletteCb = cb; }
 
@@ -77,25 +80,37 @@ export class LightingEngine {
   /** 设置播放中的视觉光源：frame 优先，无则回退 cover */
   requestPalette(source: LightingSource, onDone: (p: PaletteColors | null) => void): void {
     this.onPaletteCb = onDone;
+    const key = source.kind + ':' + source.fileId;
+    if (key !== this.sourceKey) {
+      this.sourceKey = key; this.generation++; this.sampling = false;
+      this.current = null;
+    }
+    const generation = this.generation;
     if (source.kind === 'frame') {
-      if (this.frameCache.has(source.fileId)) { onDone(this.frameCache.get(source.fileId) ?? null); return; }
-      // 节流 + 采样：现有 getThumb()，禁止逐帧
+      const timeKey = key + ':' + Math.floor(this.lastThumbTime / 2);
       const now = Date.now();
-      const needThumb = source.fileId !== this.lastPlaybackId || (now - this.lastThumbAt) >= THROTTLE_MS;
-      if (!needThumb && this.pending) return;
-      this.lastPlaybackId = source.fileId;
-      this.lastThumbAt = now;
-      this.sampleFrame(source.fileId).then((p) => {
-        this.frameCache.set(source.fileId, p);
-        this.pending = p;
-        onDone(this.smooth(p));
-      });
+      const cached = this.frameCache.get(timeKey);
+      if (cached && now - cached.at < (cached.palette ? THROTTLE_MS : 500)) {
+        onDone(this.smooth(cached.palette)); return;
+      }
+      if (this.sampling) return;
+      this.sampling = true;
+      this.sampleFrame(source.fileId).then(p => {
+        if (generation !== this.generation) return;
+        this.frameCache.set(timeKey, { palette: p, at: Date.now() });
+        if (this.frameCache.size > 64) this.frameCache.delete(this.frameCache.keys().next().value!);
+        this.onPaletteCb?.(this.smooth(p));
+      }).finally(() => { if (generation === this.generation) this.sampling = false; });
     } else {
-      if (this.coverCache.has(source.fileId)) { onDone(this.smooth(this.coverCache.get(source.fileId) ?? null)); return; }
-      this.sampleImage(source.posterUrl).then((p) => {
-        this.coverCache.set(source.fileId, p);
-        onDone(this.smooth(p));
-      });
+      if (this.coverCache.has(key)) { onDone(this.smooth(this.coverCache.get(key) ?? null)); return; }
+      if (this.sampling) return;
+      this.sampling = true;
+      this.sampleImage(source.posterUrl).then(p => {
+        if (generation !== this.generation) return;
+        if (p) this.coverCache.set(key, p);
+        if (this.coverCache.size > 64) this.coverCache.delete(this.coverCache.keys().next().value!);
+        this.onPaletteCb?.(this.smooth(p));
+      }).finally(() => { if (generation === this.generation) this.sampling = false; });
     }
   }
 

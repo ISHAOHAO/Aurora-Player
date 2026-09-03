@@ -30,6 +30,7 @@ export interface PlayerStats {
 }
 
 export interface PlayerStatus {
+  fullscreen?: boolean;
   title: string | null;
   path: string | null;
   timePos: number | null;
@@ -44,6 +45,7 @@ export interface PlayerStatus {
 }
 
 export interface DlnaState {
+  firewallWarning?: string;
   running: boolean;
   friendlyName: string;
   port: number;
@@ -143,7 +145,8 @@ export interface PlayError {
 
 /** 自动更新状态推送 */
 export interface UpdateStatus {
-  state: 'checking' | 'available' | 'latest' | 'downloading' | 'downloaded' | 'error' | 'idle';
+  state: 'checking' | 'available' | 'latest' | 'downloading' | 'downloaded' | 'error' | 'idle' | 'unavailable';
+  revision?: number;
   version?: string;
   percent?: number;
   bytesPerSecond?: number;
@@ -162,6 +165,10 @@ export interface VisualFile {
 import type { VisualTheme } from './visual/types';
 
 export interface AuroraBridge {
+  onDlnaState: (cb: (state: DlnaState) => void) => () => void;
+  onLibraryChanged: (cb: (items: LibraryItem[]) => void) => () => void;
+  onScanStatus: (cb: (state: { state: string; count?: number; message?: string }) => void) => () => void;
+  getScanStatus: () => Promise<{ state: string; count?: number; message?: string }>;
   platform: string;
   versions: { electron: string; node: string };
   /** 转发任意 mpv IPC 命令,resolve 为 mpv 的 data 字段 */
@@ -252,6 +259,7 @@ export interface AuroraBridge {
   closeWindow: () => void;
   /** 自动更新：手动检查 */
   updateCheck: () => Promise<{ ok: boolean; updateAvailable?: boolean; error?: string }>;
+  getUpdateStatus: () => Promise<UpdateStatus>;
   /** 自动更新：立即退出并安装已下载的更新 */
   updateInstallNow: () => Promise<{ ok: boolean }>;
   /** 自动更新：状态推送（检查中/下载进度/已下载待重启/错误） */

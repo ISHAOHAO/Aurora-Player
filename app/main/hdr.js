@@ -60,7 +60,11 @@ function decide(video, display, override = {}, tune = {}) {
   };
 
   // 高级调参 → mpv 属性（0/undefined = 不设置，走 mpv 自动）
-  const tuneProps = {};
+  const tuneProps = {
+    'tone-mapping': 'auto', 'gamut-mapping-mode': 'auto', 'hdr-compute-peak': 'auto',
+    'target-peak': 'auto', 'target-contrast': 'auto', saturation: 0,
+    'hdr-peak-percentile': 0,
+  };
   if (typeof tune.saturation === 'number' && tune.saturation !== 0) tuneProps.saturation = tune.saturation;
   if (typeof tune.hdrPeakPercentile === 'number' && tune.hdrPeakPercentile > 0) tuneProps['hdr-peak-percentile'] = tune.hdrPeakPercentile;
   const tonemapTune = { ...tuneProps };
@@ -83,12 +87,12 @@ function decide(video, display, override = {}, tune = {}) {
         ? `用户强制直通：${kind}${base.hdr10plus ? '（HDR10+）' : ''} 元数据随帧透传至 HDR 显示器`
         : `HDR 片源(${kind}${base.dv ? '/Dolby Vision' : ''}${base.hdr10plus ? '+HDR10+' : ''}) + HDR 显示器，直通`,
       props: {
+        ...tuneProps,
         'target-colorspace-hint': 'yes',
         // auto：静态 HDR 元数据缺失（max-cll=0，网络"测试壁纸"视频通病）时
         // mpv 自动启动态峰值检测；有元数据时等效 no（直通不检测）。
         // 此前硬编码 no → 缺元数据视频用错误 sig-peak 处理 PQ 曲线 → 画质花斑。
         'hdr-compute-peak': 'auto',
-        ...tuneProps,
       },
     };
   }
@@ -99,11 +103,11 @@ function decide(video, display, override = {}, tune = {}) {
       ? `用户强制色调映射：${kind} → SDR（${algo}）`
       : `HDR 片源(${kind}${base.dv ? '/Dolby Vision' : ''}${base.hdr10plus ? '+HDR10+' : ''}) 在 SDR 显示器上播放，色调映射（${algo}，感知色域映射）`,
     props: {
+      ...tonemapTune,
       'target-colorspace-hint': 'no',
       'tone-mapping': algo,
       'hdr-compute-peak': 'yes',       // 逐帧峰值检测，暗场/亮场自适应
       'gamut-mapping-mode': 'perceptual',
-      ...tonemapTune,
     },
   };
 }

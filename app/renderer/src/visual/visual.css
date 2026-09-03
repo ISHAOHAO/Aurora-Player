@@ -10,6 +10,14 @@
   pointer-events: none;
   overflow: hidden;
 }
+/* 播放画面优先：含暂停、换集和全屏；禁用装饰层而非淡出叠加。 */
+body:is(.player, [data-video-first="true"]) :is(#vs-atmosphere, #vs-edge-top, #vs-edge-bottom, .vs-spot-glow) {
+  display: none !important;
+}
+body:is(.player, [data-video-first="true"]) {
+  background: transparent;
+  transition: none;
+}
 .vs-scene { position: absolute; inset: 0; will-change: transform, opacity; }
 .vs-light { position: absolute; inset: 0; mix-blend-mode: screen; }
 .vs-light-blob {

@@ -7,16 +7,22 @@
  */
 const { app, BrowserWindow, Menu, dialog, ipcMain, utilityProcess, Tray, nativeImage, screen } = require('electron');
 const { spawn } = require('child_process');
-const net = require('net');
+const { MpvTransport } = require('./mpv-transport');
+const { CAST_OPTIONS } = require('./cast-options');
+const { fileFromArgs, resumePosition } = require('./launch');
+const { DropMeter } = require('./drop-meter');
+const { Worker } = require('node:worker_threads');
+const { CoverQueue } = require('./cover-queue');
 const path = require('path');
 const fs = require('fs');
 const { decide } = require('./hdr');
 const db = require('./db');
+const { readJson, writeJson } = require('./json-store');
 const updater = require('./updater');
 
 ipcMain.handle('app:get-version', () => app.getVersion());
 
-const MPV_EXE = path.join(__dirname, '..', '..', 'runtime', 'mpv', 'mpv.exe');
+const MPV_EXE = app.isPackaged ? path.join(process.resourcesPath, 'runtime', 'mpv', 'mpv.exe') : path.join(__dirname, '..', '..', 'runtime', 'mpv', 'mpv.exe');
 const PIPE_PATH = '\\\\.\\pipe\\aurora-mpv';
 const DIST_HTML = path.join(__dirname, '..', 'renderer', 'dist', 'index.html');
 const PRELOAD = path.join(__dirname, '..', 'preload', 'preload.js');
@@ -57,24 +63,22 @@ const DEFAULT_SETTINGS = {
 };
 
 function readSettings() {
-  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE(), 'utf8')) }; }
-  catch { return { ...DEFAULT_SETTINGS }; }
+  return { ...DEFAULT_SETTINGS, ...readJson(SETTINGS_FILE(), {}) };
 }
 let settings = { ...DEFAULT_SETTINGS };   // 磁盘读取延迟到 whenReady（app.getPath 需 ready 后才可靠）
 function writeSettings() {
-  try { fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(settings, null, 2)); } catch {}
+  writeJson(SETTINGS_FILE(), settings);
 }
 
 /* ---------------- 视觉系统持久化（visual.json，独立于 settings） ---------------- */
 const DEFAULT_VISUAL = { version: 1, activeThemeId: 'cinema', activePresetId: null, presets: [] };
 let visualState = DEFAULT_VISUAL;   // 磁盘读取延迟到 whenReady
 function readVisual() {
-  try { return JSON.parse(fs.readFileSync(VISUAL_FILE(), 'utf8')); }
-  catch { return null; }
+  return readJson(VISUAL_FILE(), null);
 }
 function writeVisual(v) {
+  writeJson(VISUAL_FILE(), v);
   visualState = v;
-  try { fs.writeFileSync(VISUAL_FILE(), JSON.stringify(v, null, 2)); } catch {}
 }
 /** 基础校验：presets 数组 + 活动主题 id 存在 */
 function sanitizeVisual(v) {
@@ -91,9 +95,22 @@ function sanitizeVisual(v) {
 
 let homeWin = null;
 let mpvProc = null;
-let dyingMpv = null;          // 旧 mpv 已 kill 但尚未完全退出：新 spawn 前必须等它释放命名管道
+const dyingProcesses = new Set();
+let sessionGeneration = 0;
+let recoveryTimer = null;
+let recoveryAttempts = 0;
+let sessionRecorded = false;
+let lastPositionWrite = 0;
+let transport = null;
 let currentPath = null;
 let casting = null;          // { cp, title } — DLNA 投屏会话标识
+let stoppedCast = null;      // DLNA Stop 停止媒体，保留窗口；后续 Play 可从头恢复
+let playbackAudio = null;    // 音量属于播放器，不属于单集；首次播放才读取默认值
+let audioRevision = 0;
+function getPlaybackAudio() {
+  if (!playbackAudio) playbackAudio = { volume: Math.max(0, Math.min(100, Number(settings.defaultVolume) || 0)), mute: false };
+  return playbackAudio;
+}
 let dlnaProc = null;
 let dlnaState = { running: false, friendlyName: 'Aurora Player', port: 0 };
 let videoFs = false;         // 透明窗 isFullScreen() 回报不可靠，事件自行跟踪
@@ -122,9 +139,7 @@ function markLocal() {
   if (lastRemoteCmdAt && Date.now() - lastRemoteCmdAt < 3000) maybeCastToast();
 }
 
-let pipe = null;
-let reqSeq = 0;
-const pending = new Map();
+const dropMeter = new DropMeter();
 let statusTimer = null;
 let vrTimer = null;
 let hdrRetry = 0;
@@ -134,16 +149,19 @@ let perfDegrade = { tier: 0, since: 0, notified: false };   // D34 自动性能�
 
 /* ---------------- mpv 进程 ---------------- */
 
-function spawnMpv(hwnd, file, seek) {
+function spawnMpv(hwnd, file, seek, generation) {
   // 调试开关（黑屏定位用，见 docs/05-实现偏差清单.md）：
   //   AURORA_VO=direct3d   强制 VO
   //   AURORA_HWDEC=no      关闭硬解
   //   AURORA_MPV_EXTRA='["--x","y"]'  追加任意参数
-  const extra = JSON.parse(process.env.AURORA_MPV_EXTRA || '[]');
+  let extra = [];
+  try { extra = JSON.parse(process.env.AURORA_MPV_EXTRA || '[]'); if (!Array.isArray(extra) || extra.some(x => typeof x !== 'string')) throw new Error('Expected string array'); }
+  catch (e) { console.error('[mpv] invalid extra options', e.message); }
+  const address = `${PIPE_PATH}-${process.pid}-${generation}`;
   const hwdec = forceSoftwareDecode ? 'no' : (process.env.AURORA_HWDEC || 'auto-safe');
-  mpvProc = spawn(MPV_EXE, [
+  const proc = spawn(MPV_EXE, [
     `--wid=${hwnd}`,
-    `--input-ipc-server=${PIPE_PATH}`,
+    `--input-ipc-server=${address}`,
     '--idle=yes',              // 载入失败也保持进程存活（否则 pipe 随进程退出，end-file 事件丢失）
     '--keep-open=yes',
     '--no-terminal',
@@ -154,79 +172,90 @@ function spawnMpv(hwnd, file, seek) {
     ...(process.env.AURORA_VO ? [`--vo=${process.env.AURORA_VO}`] : []),
     ...extra,
     ...(seek ? [`--start=${seek}`] : []),
-    ...(file ? [file] : ['--idle=yes']),
+    ...(casting ? CAST_OPTIONS : []),
+    `--volume=${getPlaybackAudio().volume}`,
+    `--mute=${getPlaybackAudio().mute ? 'yes' : 'no'}`,
+    '--', ...(file ? [casting?.playbackUri || file] : []),
   ], { stdio: 'ignore' });
 
-  mpvProc.on('exit', () => { mpvProc = null; });
-  connectPipe(30);
+  mpvProc = proc;
+  let ended = false;
+  const onExit = () => {
+    if (ended) return; ended = true;
+    if (mpvProc !== proc || generation !== sessionGeneration) return;
+    mpvProc = null;
+    transport?.dispose(); transport = null;
+    clearTimeout(statusTimer); statusTimer = null;
+    pushPlaybackError({ reason: '播放进程意外退出', attempted: '正在尝试恢复播放' });
+    if (!quitting && currentPath && recoveryAttempts < 2) {
+      const target = currentPath, pos = lastStatus.timePos || 0, info = casting;
+      recoveryTimer = setTimeout(() => {
+        if (generation === sessionGeneration) startPlayback(target, pos, info, true);
+      }, 500 * (2 ** recoveryAttempts++));
+    }
+  };
+  proc.once('exit', onExit);
+  proc.once('error', onExit);
+  connectPipe(address, generation);
 }
 
 /* ---------------- 命名管道 IPC ---------------- */
 
-function connectPipe(retriesLeft) {
-  const thisPipe = net.connect(PIPE_PATH);
-  pipe = thisPipe;
-  let buf = '';
-  let retried = false;
-  const retry = () => {
-    if (retried) return;
-    retried = true;
-    if (pipe === thisPipe) pipe = null;
-    if (retriesLeft > 0 && !quitting) setTimeout(() => connectPipe(retriesLeft - 1), 200);
-  };
-
-  thisPipe.on('connect', () => {
-    startStatusPolling();
-    hdrRetry = 0;
-    refreshMetadata();   // 启动事件可能在管道连接前已发，主动拉一次（定时重试兜底参数未就绪）
+function connectPipe(address, generation) {
+  const client = new MpvTransport(address);
+  transport = client;
+  client.on('warning', message => console.warn('[mpv]', message));
+  client.on('unavailable', () => {
+    if (generation === sessionGeneration) pushPlaybackError({ reason: '播放引擎通信超时，请重试' });
   });
-
-  thisPipe.on('data', (chunk) => {
-    buf += chunk.toString('utf8');
-    let idx;
-    while ((idx = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, idx).trim();
-      buf = buf.slice(idx + 1);
-      if (!line) continue;
-      let msg;
-      try { msg = JSON.parse(line); } catch { continue; }
-      if (msg.request_id !== undefined && pending.has(msg.request_id)) {
-        pending.get(msg.request_id)(msg);
-        pending.delete(msg.request_id);
-      } else if (msg.event === 'file-loaded') {
-        loadPending = false;
-        // 应用设置默认值（每新文件一次）
-        mpvCommand('set_property', 'volume', settings.defaultVolume);
-        mpvCommand('set_property', 'sub-font-size', settings.subFontSize);
-        applyAudioSettings();
-        applyShaders();
-        refreshMetadata();
-      } else if (msg.event === 'video-reconfig') {
-        // 视频参数就绪/变化（解码器重初始化后 video-params 才可用）→ 重跑决策链（去抖）
-        clearTimeout(vrTimer);
-        vrTimer = setTimeout(refreshMetadata, 300);
-      } else if (msg.event === 'end-file' && msg.reason === 'error') {
-        // 播放失败（D25）：无法识别格式/解码初始化失败等 → 组装错误对象推给渲染层
-        pushPlaybackError();
-      }
+  client.on('connected', () => {
+    if (generation !== sessionGeneration) return;
+    // 启动参数之后、管道就绪之前仍可能收到调音命令，连接后补发最新值。
+    const audio = getPlaybackAudio();
+    client.command('set_property', 'volume', audio.volume);
+    client.command('set_property', 'mute', audio.mute);
+    startStatusPolling(); hdrRetry = 0; refreshMetadata();
+  });
+  client.on('event', msg => {
+    if (generation !== sessionGeneration) return;
+    if (msg.event === 'file-loaded') {
+      confirmLoaded();
+      refreshMetadata();
+    } else if (msg.event === 'video-reconfig') {
+      clearTimeout(vrTimer);
+      vrTimer = setTimeout(() => { if (generation === sessionGeneration) refreshMetadata(); }, 300);
+    } else if (msg.event === 'end-file' && msg.reason === 'error') {
+      loadPending = false; pushPlaybackError();
     }
   });
-
-  thisPipe.on('error', () => {
-    thisPipe.destroy();
-    retry();
-  });
-  // 已连接后意外断开（如连接到正在退出的旧 mpv 管道）→ 重新连接新 mpv 的管道
-  thisPipe.on('close', retry);
+  client.connect();
 }
-
+function confirmLoaded() {
+  loadPending = false;
+  if (sessionRecorded || !currentPath) return;
+  sessionRecorded = true;
+  addRecent(currentPath);
+  mpvCommand('set_property', 'sub-font-size', settings.subFontSize);
+  applyAudioSettings(); applyShaders();
+}
 function mpvCommand(...args) {
-  return new Promise((resolve) => {
-    if (!pipe || pipe.destroyed) return resolve(null);
-    const id = ++reqSeq;
-    pending.set(id, resolve);
-    pipe.write(JSON.stringify({ command: args, request_id: id }) + '\n');
-  });
+  const [command, property, value] = args;
+  if (stoppedCast && property === 'pause' && (command === 'cycle' || (command === 'set_property' && value === false))) {
+    return startPlayback(stoppedCast.file, 0, stoppedCast.info).then(() => ({ error: 'success' }));
+  }
+  if ((property === 'volume' && (command === 'set_property' || command === 'add') && Number.isFinite(value)) ||
+      (property === 'mute' && (command === 'cycle' || (command === 'set_property' && typeof value === 'boolean')))) {
+    const audio = getPlaybackAudio();
+    if (property === 'volume') audio.volume = Math.max(0, Math.min(100, command === 'add' ? audio.volume + value : value));
+    else audio.mute = command === 'cycle' ? !audio.mute : value;
+    audioRevision++;
+    // 使用绝对值，连续滚轮/拖动不依赖滞后的状态轮询。
+    args = ['set_property', property, audio[property]];
+    Object.assign(lastStatus, audio);
+    pushStatus({ ...lastStatus, path: currentPath || stoppedCast?.file, casting: casting || stoppedCast?.info, fullscreen: videoFs, lockPolicy: settings.lockPolicy, idle: !mpvProc });
+    dlnaSendState();
+  }
+  return transport ? transport.command(...args) : Promise.resolve({ error: 'disconnected' });
 }
 
 const mpvGet = (prop) =>
@@ -269,14 +298,18 @@ function detectDisplayHdr() {
   return lastDisplayHdr;
 }
 
+let hdrEvaluation = 0;
 async function hdrEvaluate() {
+  const evaluation = ++hdrEvaluation;
   if (!mpvProc) return null;
+  const generation = sessionGeneration;
+  const client = transport;
   const [gamma, primaries, sigPeak] = await Promise.all([
     mpvGet('video-params/gamma'),
     mpvGet('video-params/primaries'),
     mpvGet('video-params/sig-peak'),
   ]);
-  if (!gamma) return null;   // video-reconfig 前参数未就绪
+  if (!gamma || generation !== sessionGeneration) return null;   // video-reconfig 前参数未就绪
   lastDisplayHdr = detectDisplayHdr();
   const result = decide(
     { gamma, primaries, sigPeak },
@@ -286,7 +319,9 @@ async function hdrEvaluate() {
       saturation: settings.saturation, hdrPeakPercentile: settings.hdrPeakPercentile },
   );
   for (const [k, v] of Object.entries(result.props)) {
-    mpvCommand('set_property', k, v);
+    if (generation !== sessionGeneration || evaluation !== hdrEvaluation) return null;
+    const response = await client.command('set_property', k, v);
+    if (response?.error !== 'success') { console.error('[hdr] apply failed', k, response?.error); return null; }
   }
   return result;
 }
@@ -315,14 +350,18 @@ function startThumbs(file, duration) {
   } catch {}
 
   fs.mkdirSync(dir, { recursive: true });
-  thumbProc = spawn(MPV_EXE, [
+  const proc = spawn(MPV_EXE, [
     '--no-config', '--no-audio', '--no-sub',
     '--vo=image', '--vo-image-format=jpg', '--vo-image-jpeg-quality=80',
     `--vo-image-outdir=${dir}`, `--sstep=${interval}`,
-    '--no-terminal', file,
-  ], { stdio: 'ignore' });
-  thumbProc.on('exit', () => {
+    '--no-terminal', '--', file,
+  ], { stdio: 'ignore', windowsHide: true });
+  thumbProc = proc;
+  proc.on('error', error => { if (thumbProc === proc) thumbProc = null; console.error('[thumb] failed', error.message); });
+  proc.on('exit', (code) => {
+    if (thumbProc !== proc) return;
     thumbProc = null;
+    if (code !== 0) return;
     if (!thumbs || thumbs.dir !== dir) return;
     try {
       thumbs.files = fs.readdirSync(dir).filter((f) => f.endsWith('.jpg')).sort();
@@ -391,9 +430,11 @@ function applyAudioSettings() {
 }
 
 async function refreshMetadata() {
+  const generation = sessionGeneration;
   const [tracks, chapters, hdr] = await Promise.all([
     mpvGet('track-list'), mpvGet('chapter-list'), hdrEvaluate(),
   ]);
+  if (generation !== sessionGeneration) return;
   const meta = {
     tracks: (tracks || []).map((t) => ({
       id: t.id, type: t.type, lang: t.lang || null,
@@ -404,7 +445,7 @@ async function refreshMetadata() {
     hdr,
   };
   pushMeta(meta);
-  if (!hdr && hdrRetry++ < 6) setTimeout(refreshMetadata, 400); // video-params 未就绪，短轮询兜底
+  if (!hdr && hdrRetry++ < 6) { clearTimeout(vrTimer); vrTimer = setTimeout(() => { if (generation === sessionGeneration) refreshMetadata(); }, 400); } // video-params 未就绪，短轮询兜底
 }
 
 const pushStatus = (status) => {
@@ -423,7 +464,7 @@ const pushPlaybackError = (overrides) => {
   const file = currentPath;
   const reason = overrides?.reason || readLastMpvError();
   const attempted = overrides?.attempted
-    || `硬件解码(${process.env.AURORA_HWDEC || 'auto-safe'}) → 软件解码兜底`;
+    || `当前解码设置：${forceSoftwareDecode ? '软件解码' : (process.env.AURORA_HWDEC || 'auto-safe')}；可重试或切换软件解码`;
   const err = {
     file,
     reason: reason || '未知错误（详见 mpv 日志）',
@@ -460,8 +501,8 @@ function dlnaSendState() {
   const mute = lastStatus.mute === true;
   dlnaProc.postMessage({
     type: 'state',
-    state: !currentPath ? 'NO_MEDIA_PRESENT' : (lastStatus.pause ? 'PAUSED_PLAYBACK' : 'PLAYING'),
-    uri: currentPath, title: lastStatus.title,
+    state: !currentPath ? (stoppedCast ? 'STOPPED' : 'NO_MEDIA_PRESENT') : (lastStatus.pause ? 'PAUSED_PLAYBACK' : 'PLAYING'),
+    uri: currentPath || stoppedCast?.file, title: lastStatus.title || stoppedCast?.info?.title,
     pos: lastStatus.timePos, dur: lastStatus.duration,
     volume, mute,
     volumeChanged: lastSentVolume !== null && volume !== lastSentVolume,
@@ -496,29 +537,10 @@ let perfRecoverSince = 0;
 let perfTier = 1;
 
 function autoPerfDegrade(drops, vfFps, containerFps) {
-  if (!currentPath || !mpvProc) { perfDropsAccum = 0; perfFramesAccum = 0; return; }
-  const now = Date.now();
-  if (!perfWindowStart) perfWindowStart = now;
-  // 累加本窗口丢帧与输出帧
-  perfDropsAccum += (drops ?? 0);
-  perfFramesAccum += Math.round((vfFps ?? 0) * 0.5);   // 0.5s 轮询
-  if (now - perfWindowStart >= DEGRADE_WINDOW_MS) {
-    const rate = perfFramesAccum > 0 ? perfDropsAccum / perfFramesAccum : 0;
-    if (rate > DEGRADE_DROP_RATE && perfTier > 0) {
-      perfTier--;
-      applyScaleTier(perfTier);
-      sendCastToast(`性能自动降级：缩放 ${['节能', '平衡', '高画质', '极致'][perfTier]}（丢帧 ${(rate * 100).toFixed(1)}%）`);
-      perfRecoverSince = now;
-    } else if (rate <= DEGRADE_DROP_RATE && perfTier < perfBaseTier) {
-      if (!perfRecoverSince) perfRecoverSince = now;
-      if (now - perfRecoverSince >= DEGRADE_RECOVER_MS) {
-        // 恢复稳定 → 不自动升档（防抖动），仅提示
-        perfRecoverSince = now;
-      }
-    } else {
-      perfRecoverSince = 0;
-    }
-    perfDropsAccum = 0; perfFramesAccum = 0; perfWindowStart = now;
+  const rate = dropMeter.sample(drops, vfFps || containerFps, !!currentPath && !!mpvProc && lastStatus.pause === false && !lastStatus.eof);
+  if (rate !== null && rate > DEGRADE_DROP_RATE && perfTier > 0) {
+    applyScaleTier(--perfTier);
+    sendCastToast('持续丢帧，已降低缩放开销');
   }
 }
 
@@ -531,7 +553,10 @@ function applyScaleTier(tier) {
 
 function startStatusPolling() {
   if (statusTimer) return;
-  statusTimer = setInterval(async () => {
+  const generation = sessionGeneration;
+  const poll = async () => {
+    if (generation !== sessionGeneration) return;
+    const revision = audioRevision;
     const [title, timePos, duration, pause, volume, mute, eof,
       codec, vw, vh, fps, vfFps, drops, hwdec, vo, vb, ab, cacheDur, idleActive] = await Promise.all([
       mpvGet('media-title'), mpvGet('time-pos'), mpvGet('duration'),
@@ -543,9 +568,16 @@ function startStatusPolling() {
       mpvGet('video-bitrate'), mpvGet('audio-bitrate'), mpvGet('demuxer-cache-duration'),
       mpvGet('idle-active'),
     ]);
-    lastStatus = { title, timePos, duration, pause, volume, mute, eof: eof === true };
+    if (generation !== sessionGeneration) return;
+    const audio = getPlaybackAudio();
+    if (revision === audioRevision) {
+      if (Number.isFinite(volume)) audio.volume = Math.max(0, Math.min(100, volume));
+      if (typeof mute === 'boolean') audio.mute = mute;
+    }
+    lastStatus = { title, timePos, duration, pause, ...audio, eof: eof === true };
+    if (idleActive === false && timePos != null) confirmLoaded();
     const stats = { codec, w: vw, h: vh, fps, vfFps, drops, hwdec, vo, vBitrate: vb, aBitrate: ab, cacheDur };
-    const status = { ...lastStatus, path: currentPath, casting, lockPolicy: settings.lockPolicy, idle: !mpvProc, stats };
+    const status = { ...lastStatus, path: currentPath, casting, fullscreen: videoFs, lockPolicy: settings.lockPolicy, idle: !mpvProc, stats };
     pushStatus(status);
     dlnaSendState();
     // D25 载入失败判定：请求了文件但未收到 file-loaded，且 mpv 回到 idle → 失败
@@ -561,7 +593,9 @@ function startStatusPolling() {
     if (currentPath && duration && !thumbsStarted) { thumbsStarted = true; startThumbs(currentPath, duration); }
     // 显示器 HDR 能力热变化（系统 HDR 开关/跨屏拖动）→ 重跑决策链
     if (currentPath && detectDisplayHdr() !== lastDisplayHdr) refreshMetadata();
-  }, 500);
+    if (generation === sessionGeneration) statusTimer = setTimeout(poll, 500);
+  };
+  statusTimer = setTimeout(poll, 0);
 }
 
 /* ---------------- 最近播放（SQLite play_history；D35） ---------------- */
@@ -589,15 +623,15 @@ function existingPosterFor(file) {
 }
 
 function addRecent(file) {
-  const poster = existingPosterFor(file);
-  try { db.recentAdd(file, path.basename(file), Date.now(), poster); } catch {}
+  const poster = /^https?:/i.test(file) ? null : existingPosterFor(file);
+  try { db.recentAdd(file, path.basename(file), Date.now(), poster); } catch (e) { console.error('[db] recent save failed', e.message); }
   ensureRecentPoster(file);
 }
 
 /** 最近项无封面 → 后台抽帧生成，完成后更新库并推送渲染层刷新 */
 function ensureRecentPoster(file) {
-  if (existingPosterFor(file)) return;
-  if (/^https?:/i.test(file)) return;   // 网络流无法本地抽帧
+  if (/^https?:/i.test(file)) return;
+  if (existingPosterFor(file)) return;   // 网络流无法本地抽帧
   queueCover(file, (p) => {
     if (!p) return;
     try { db.recentUpdatePoster(file, p); } catch {}
@@ -605,8 +639,10 @@ function ensureRecentPoster(file) {
   });
 }
 
-function updateRecentPosition(file, timePos, duration) {
-  if (!settings.rememberPosition) return;
+function updateRecentPosition(file, timePos, duration, force = false) {
+  if (!settings.rememberPosition || !sessionRecorded) return;
+  if (!force && Date.now() - lastPositionWrite < 5000) return;
+  lastPositionWrite = Date.now();
   try { db.recentUpdatePosition(file, Math.floor(timePos), Math.floor(duration)); } catch {}
 }
 
@@ -619,17 +655,19 @@ function goto(route) {
 
 /** 同步重置会话状态（不等待进程退出；可安全立即进入新会话的准备阶段） */
 function resetSession() {
-  if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
-  if (pipe && !pipe.destroyed) pipe.destroy();
-  pipe = null;
+  if (currentPath && lastStatus.timePos != null && lastStatus.duration) updateRecentPosition(currentPath, lastStatus.timePos, lastStatus.duration, true);
+  sessionGeneration++;
+  clearTimeout(recoveryTimer); clearTimeout(vrTimer);
+  transport?.dispose(); transport = null;
+  sessionRecorded = false; lastPositionWrite = 0; dropMeter.reset();
+  if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
   stopThumbs();
   thumbsStarted = false;
   currentPath = null;
   casting = null;
-  videoFs = false;
   loadPending = false;
   perfTier = perfBaseTier; perfDropsAccum = 0; perfFramesAccum = 0; perfWindowStart = 0; perfRecoverSince = 0;
-  lastStatus = { title: null, timePos: null, duration: null, pause: true, volume: 100, mute: false, eof: false };
+  lastStatus = { title: null, timePos: null, duration: null, pause: true, ...getPlaybackAudio(), eof: false };
   lastSentVolume = null;
   lastSentMute = null;
   dlnaSendState();
@@ -640,17 +678,19 @@ function resetSession() {
     否则新 mpv 的 --input-ipc-server 可能绑定失败，或新 net.connect 连到正在退出的旧管道后静默断连，
     导致新会话无状态推送。 */
 function killMpv() {
-  const waitExit = (proc) => new Promise((r) => {
-    if (!proc) return r();
-    const t = setTimeout(r, 1500);            // 兜底：kill 后 1.5s 仍未退则放行
-    proc.once('exit', () => { clearTimeout(t); r(); });
-  });
-  const targets = [];
-  if (dyingMpv) targets.push(dyingMpv);
-  const p = mpvProc;
+  const proc = mpvProc;
   mpvProc = null;
-  if (p) { dyingMpv = p; p.kill(); targets.push(p); }
-  return Promise.all(targets.map(waitExit)).then(() => { dyingMpv = null; });
+  if (proc) {
+    let finish;
+    const promise = new Promise(resolve => { finish = resolve; });
+    dyingProcesses.add(promise);
+    let timer;
+    const done = () => { clearTimeout(timer); dyingProcesses.delete(promise); finish(); };
+    proc.once('exit', done); proc.once('error', done);
+    timer = setTimeout(done, 1500);
+    try { proc.kill(); } catch { done(); }
+  }
+  return Promise.all([...dyingProcesses]);
 }
 
 function cleanupPlayback() {
@@ -658,25 +698,32 @@ function cleanupPlayback() {
   return killMpv();
 }
 
-async function startPlayback(file, seek, castingInfo) {
-  await cleanupPlayback();     // 先收掉旧会话（含等待旧 mpv 完全退出，避免命名管道竞争）
+async function startPlayback(file, seek, castingInfo, recovering = false) {
+  if (typeof file !== 'string' || !file.trim() || (!path.isAbsolute(file) && !/^https?:\/\//i.test(file))) return false;
+  stoppedCast = null;
+  if (!recovering) { recoveryAttempts = 0; forceSoftwareDecode = false; }
+  const cleaned = cleanupPlayback();
+  const generation = sessionGeneration;
+  await cleaned;
+  if (generation !== sessionGeneration || quitting) return false;
+  seek = recovering ? seek : resumePosition(db.recentGet(file), settings.rememberPosition, seek, !!castingInfo);     // 先收掉旧会话（含等待旧 mpv 完全退出，避免命名管道竞争）
   currentPath = file;
   casting = castingInfo || null;  // DLNA 投屏会话（规格 §8：CASTING 徽标）
-  addRecent(file);
   loadPending = true;   // D25：等待 file-loaded 确认；超时+idle-active → 判定失败
 
   // 单窗：复用唯一主窗口（透明），mpv --wid 嵌入其 HWND 在下层透出
   const doSpawn = () => {
+    if (generation !== sessionGeneration || quitting || !homeWin || homeWin.isDestroyed()) return;
     const buf = homeWin.getNativeWindowHandle();
     const hwnd = Number(buf.length >= 8 ? buf.readBigUInt64LE(0) : buf.readUInt32LE(0));
-    spawnMpv(hwnd, file, seek);
+    spawnMpv(hwnd, file, seek, generation);
   };
   if (!homeWin || homeWin.isDestroyed()) {
     // 冷启动（命令行带文件路径）：直接以播放路由加载，避免 nav:goto 与渲染层监听注册竞态
     createHomeWindow('/player');
     // transparent 窗 ready-to-show 不可靠（偶发不触发）→ did-finish-load + 3s 超时双兜底
     let spawned = false;
-    const safeSpawn = () => { if (!spawned) { spawned = true; doSpawn(); } };
+    const safeSpawn = () => { if (!spawned && generation === sessionGeneration) { spawned = true; doSpawn(); } };
     homeWin.once('ready-to-show', safeSpawn);
     homeWin.webContents.once('did-finish-load', safeSpawn);
     setTimeout(safeSpawn, 3000);
@@ -687,12 +734,17 @@ async function startPlayback(file, seek, castingInfo) {
   }
 }
 
-function stopPlayback() {
+function stopPlayback(keepPresentation = false) {
   const wasFs = videoFs;
+  stoppedCast = keepPresentation ? (casting && currentPath ? { file: currentPath, info: casting } : stoppedCast) : null;
   resetSession();       // 立即复位状态与导航（不阻塞 UI）
   killMpv();            // 后台杀进程；下次 startPlayback 会等待其完全退出
-  if (wasFs && homeWin && !homeWin.isDestroyed()) homeWin.setFullScreen(false);
-  goto('home');   // 返回首页
+  if (!keepPresentation) {
+    if (wasFs && homeWin && !homeWin.isDestroyed()) homeWin.setFullScreen(false);
+    goto('home');
+  } else {
+    pushStatus({ ...lastStatus, path: stoppedCast?.file, casting: stoppedCast?.info, fullscreen: videoFs, lockPolicy: settings.lockPolicy, idle: true });
+  }
 }
 
 /* ---------------- 防火墙自检（规格 §9：缺失则添加，结果记日志） ---------------- */
@@ -706,17 +758,40 @@ function ensureFirewallRules(port) {
     ['Aurora Player SSDP', 'UDP', '1900'],
   ];
   for (const [name, proto, lport] of rules) {
-    execFile('netsh', ['advfirewall', 'firewall', 'show', 'rule', `name=${name}`], (err, stdout) => {
-      if (!err && stdout && stdout.includes(name)) return;   // 已存在
-      execFile('netsh', ['advfirewall', 'firewall', 'add', 'rule',
-        `name=${name}`, 'dir=in', 'action=allow', `protocol=${proto}`, `localport=${lport}`],
-        (e2) => log(e2 ? `添加失败 ${name}: ${e2.message}(需管理员)` : `已添加入站规则 ${name} ${proto}/${lport}`));
+    const scope = ['dir=in', 'action=allow', 'profile=private', 'remoteip=localsubnet',
+      'program=' + process.execPath, 'protocol=' + proto, 'localport=' + lport];
+    execFile('netsh', ['advfirewall', 'firewall', 'set', 'rule', 'name=' + name, 'new', ...scope], { windowsHide: true }, error => {
+      if (!error) return;
+      execFile('netsh', ['advfirewall', 'firewall', 'add', 'rule', 'name=' + name, ...scope], { windowsHide: true }, e => {
+        if (e) {
+          dlnaState.firewallWarning = '无法配置专用网络防火墙；投屏不可达时请在 Windows 防火墙中允许本应用。';
+          notifyDlnaState(); log('专用网络规则配置失败（可能需要管理员权限）');
+        } else log('已限定为专用网络和本地子网：' + name);
+      });
     });
   }
 }
 
 /* ---------------- DLNA 独立进程（规格 docs/03；utilityProcess, Node 语义） ---------------- */
 
+let dlnaGeneration = 0;
+function notifyDlnaState() {
+  if (homeWin && !homeWin.isDestroyed()) homeWin.webContents.send('dlna:updated', dlnaState);
+}
+let dlnaStopped = Promise.resolve();
+async function restartDlna() {
+  const generation = ++dlnaGeneration;
+  const old = dlnaProc; dlnaProc = null;
+  dlnaState.running = false; notifyDlnaState();
+  if (casting) stopPlayback();
+  if (old) dlnaStopped = new Promise(resolve => {
+    const timer = setTimeout(resolve, 2000);
+    old.once('exit', () => { clearTimeout(timer); resolve(); });
+    old.kill();
+  });
+  await dlnaStopped;
+  if (generation === dlnaGeneration && !quitting) startDlna();
+}
 function startDlna() {
   if (!settings.dlnaEnabled) { dlnaState = { ...dlnaState, running: false }; return; }
   const userData = app.getPath('userData');
@@ -728,7 +803,7 @@ function startDlna() {
     fs.writeFileSync(dlnaCfgFile, JSON.stringify(c, null, 2));
   } catch {}
   fs.mkdirSync(path.join(userData, 'logs'), { recursive: true });
-  dlnaProc = utilityProcess.fork(DLNA_ENTRY, [], {
+  const proc = utilityProcess.fork(DLNA_ENTRY, [], {
     env: {
       ...process.env,
       AURORA_DLNA_CFG: path.join(userData, 'dlna.json'),
@@ -736,32 +811,40 @@ function startDlna() {
     },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
-  dlnaProc.stdout?.on('data', (d) => console.log('[dlna]', String(d).trim()));
-  dlnaProc.stderr?.on('data', (d) => console.error('[dlna]', String(d).trim()));
+  dlnaProc = proc;
+  proc.stdout?.on('data', (d) => console.log('[dlna]', String(d).trim()));
+  proc.stderr?.on('data', (d) => console.error('[dlna]', String(d).trim()));
 
-  dlnaProc.on('message', (m) => {
-    if (!m) return;
+  proc.on('message', (m) => {
+    if (!m || dlnaProc !== proc) return;
     if (m.type === 'ready') {
       dlnaState = { running: true, friendlyName: m.friendlyName, port: m.port };
       updateTrayMenu();
+      notifyDlnaState();
       ensureFirewallRules(m.port);
       return;
     }
     if (m.type !== 'cmd') return;
     // 规格 §8 控制权仲裁：本地 UI > 远程 CP；CP 命令直接执行，状态经 LastChange 回推
     switch (m.cmd) {
-      case 'load': startPlayback(m.uri, undefined, { cp: m.cp, title: m.title }); break;
-      case 'play': markRemote(); mpvCommand('set_property', 'pause', false); break;
+      case 'load': startPlayback(m.uri, undefined, { cp: m.cp, title: m.title, playbackUri: m.playbackUri }); break;
+      case 'play':
+        markRemote();
+        if (stoppedCast) startPlayback(stoppedCast.file, 0, stoppedCast.info);
+        else mpvCommand('set_property', 'pause', false);
+        break;
       case 'pause': markRemote(); mpvCommand('set_property', 'pause', true); break;
-      case 'stop': stopPlayback(); break;
+      case 'stop': stopPlayback(true); break;
       case 'seek': markRemote(); mpvCommand('seek', m.seconds, 'absolute'); break;
       case 'volume': markRemote(); mpvCommand('set_property', 'volume', m.value); break;
       case 'mute': markRemote(); mpvCommand('set_property', 'mute', m.value); break;
     }
   });
-  dlnaProc.on('exit', (code) => {
+  proc.on('exit', (code) => {
+    if (dlnaProc !== proc) return;
     dlnaState.running = false;
     dlnaProc = null;
+    notifyDlnaState();
     console.error('[dlna] exited', code);
   });
 }
@@ -792,75 +875,23 @@ const POSTER_NAMES = ['poster.jpg', 'poster.png', 'folder.jpg', 'cover.jpg', 'co
 
 let library = [];
 try { library = db.allMedia(); } catch {}
-let scanning = false;
-
-function saveLibrary() {
-  try { db.replaceMedia(library); } catch {}
+let scanWorker = null;
+let libraryScanStatus = { state: 'idle', count: 0 };
+let scanGeneration = 0;
+let libraryNotifyTimer = null;
+let libraryChanges = new Map();
+function notifyLibraryChanges(item) {
+  libraryChanges.set(item.path, item);
+  if (libraryNotifyTimer) return;
+  libraryNotifyTimer = setTimeout(() => {
+    libraryNotifyTimer = null;
+    if (homeWin && !homeWin.isDestroyed()) homeWin.webContents.send('library:changed', [...libraryChanges.values()]);
+    libraryChanges.clear();
+  }, 250);
 }
 
 function notifyLibrary() {
   if (homeWin && !homeWin.isDestroyed()) homeWin.webContents.send('library:updated', library);
-}
-
-/** 文件名解析：标题/年份/剧集号（S01E02 / E02 / 第02集） */
-function parseName(filename) {
-  const base = filename.replace(/\.[^.]+$/, '');
-  let title = base, year = null, season = null, episode = null;
-  let m = base.match(/[Ss](\d{1,2})[Ee](\d{1,3})/) || base.match(/第\s*(\d{1,3})\s*[集话]/);
-  if (m) {
-    if (m.length === 3) { season = +m[1]; episode = +m[2]; } else { episode = +m[1]; }
-    title = base.slice(0, m.index);
-  }
-  // 年份取最后一个 19xx/20xx 匹配（片名自带数字年份时，发行年通常在后："Blade.Runner.2049.2017.1080p"）
-  const years = [...title.matchAll(/(?:19|20)\d{2}/g)];
-  if (years.length) {
-    const last = years[years.length - 1];
-    year = +last[0];
-    title = title.slice(0, last.index);
-  }
-  title = title
-    .replace(/[\[【(（].*?(?:[\]】)）])/g, ' ')    // 制作组/标签括号
-    .replace(/[._]+/g, ' ')
-    .replace(/\b(1080p|720p|2160p|4k|8k|bluray|blu-ray|web-?dl|webrip|hdtv|hdr|hevc|x26[45]|avc|aac|dts|remux)\b.*$/i, '')
-    .replace(/[-–—\s]+$/, '')
-    .trim();
-  return { title: title || base, year, season, episode };
-}
-
-/** 规格标签提取（D27）：分辨率 / HDR / ASS 字幕，从文件名+同目录 .ass 探测 */
-function parseSpecs(filename, dir) {
-  const s = filename.replace(/\.[^.]+$/, '');
-  const low = s.toLowerCase();
-  const specs = { res: null, hdr: null, sub: null };
-  if (/\b(2160p|4k|uhd)\b/.test(low)) specs.res = '4K';
-  else if (/\b1080p\b/.test(low)) specs.res = '1080p';
-  else if (/\b720p\b/.test(low)) specs.res = '720p';
-  if (/\b(dv|dovi|dolby.?vision)\b/.test(low)) specs.hdr = 'Dolby Vision';
-  else if (/\b(hdr10\+|hdr10plus)\b/.test(low)) specs.hdr = 'HDR10+';
-  else if (/\b(hdr10|hdr|pq)\b/.test(low)) specs.hdr = 'HDR10';
-  else if (/\bhlg\b/.test(low)) specs.hdr = 'HLG';
-  if (/\bass\b/.test(low)) specs.sub = 'ASS';
-  if (!specs.sub && dir) {
-    // 同目录 .ass 字幕文件（整目录算一次，命中任一即标记）
-    try {
-      if (fs.readdirSync(dir).some((f) => /\.ass$/i.test(f))) specs.sub = 'ASS';
-    } catch {}
-  }
-  return specs;
-}
-
-/** nfo 容错解析（<title>/<year>） */
-function readNfo(dir, base) {
-  for (const name of [`${base}.nfo`, 'movie.nfo', 'tvshow.nfo']) {
-    try {
-      const xml = fs.readFileSync(path.join(dir, name), 'utf8');
-      if (/<!DOCTYPE|<!ENTITY/i.test(xml)) continue;
-      const t = xml.match(/<title>([^<]+)<\/title>/i);
-      const y = xml.match(/<year>(\d{4})<\/year>/i);
-      if (t) return { title: t[1].trim(), year: y ? +y[1] : null };
-    } catch {}
-  }
-  return null;
 }
 
 /** 同目录封面探测 */
@@ -872,22 +903,7 @@ function findPoster(dir, base) {
   return null;
 }
 
-/** 递归收集视频文件（深度≤4，跳隐藏目录，上限 2000） */
-function walkVideos(dir, depth = 0, out = []) {
-  if (depth > 4 || out.length > 2000) return out;
-  let entries;
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
-  for (const e of entries) {
-    if (e.name.startsWith('.') || e.name.startsWith('$')) continue;
-    const full = path.join(dir, e.name);
-    if (e.isDirectory()) walkVideos(full, depth + 1, out);
-    else if (VIDEO_EXTS.has(e.name.split('.').pop().toLowerCase())) out.push(full);
-  }
-  return out;
-}
-
-let coverQueue = [];
-let coverRunning = false;
+const covers = new CoverQueue(MPV_EXE, POSTER_DIR, posterOutFor);
 
 /** 封面产物路径（确定性：md5(path)） */
 function posterOutFor(file) {
@@ -897,89 +913,58 @@ function posterOutFor(file) {
 /** 无封面 → mpv 抽帧生成（8% 处一帧，jpg；串行队列 + 20s 超时保护）
     done(posterPath|null)：成功返回产物路径，失败返回 null（不中断队列）。
     临时目录按条目独立建名，避免共享 _tmp 读到上一部视频的残留帧。 */
-function queueCover(file, done) {
-  coverQueue.push({ file, done });
-  if (coverRunning) return;
-  coverRunning = true;
-  const next = () => {
-    const it = coverQueue.shift();
-    if (!it) { coverRunning = false; return; }
-    const out = posterOutFor(it.file);
-    const tmpDir = path.join(POSTER_DIR(), '_tmp', `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-    fs.mkdirSync(tmpDir, { recursive: true });
-    const proc = spawn(MPV_EXE, [
-      '--no-config', '--no-audio', '--no-sub', '--frames=1', '--start=8%',
-      '--hwdec=no',   // 强制软件解码：硬件解码帧经 --vo=image 下采可能出黑帧
-      '--vo=image', '--vo-image-format=jpg', '--vo-image-jpeg-quality=82',
-      `--vo-image-outdir=${tmpDir}`, '--no-terminal', it.file,
-    ], { stdio: 'ignore' });
-    const finished = () => {
-      let poster = null;
-      try {
-        const f = fs.readdirSync(tmpDir).filter((x) => x.endsWith('.jpg'))[0];
-        if (f) {
-          fs.renameSync(path.join(tmpDir, f), out);
-          poster = out;
-        }
-      } catch {}
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-      it.done(poster);
-      next();
-    };
-    proc.on('exit', finished);
-    proc.on('error', finished);
-    setTimeout(() => { try { proc.kill(); } catch {} }, 20000).unref?.();   // 单帧 20s 超时保护
-  };
-  next();
-}
+function queueCover(file, done) { covers.add(file, done); }
 
-function scanLibrary() {
-  if (scanning) return;
-  scanning = true;
-  try {
-    // 增量扫描：mtime+size 未变则复用缓存（db 内旧条目）
-    const seen = new Map(library.map((it) => [it.path, it]));
-    const next = [];
-    for (const folder of settings.libraryFolders || []) {
-      for (const file of walkVideos(folder)) {
-        const st = fs.statSync(file, { throwIfNoEntry: false });
-        if (!st) continue;
-        const old = seen.get(file);
-        if (old && old.mtime === st.mtimeMs && old.size === st.size) { next.push(old); continue; }
-        const dir = path.dirname(file);
-        const base = path.basename(file).replace(/\.[^.]+$/, '');
-        const parsed = parseName(path.basename(file));
-        const nfo = readNfo(dir, base);
-        const item = {
-          path: file,
-          name: path.basename(file),
-          title: nfo?.title || parsed.title,
-          year: nfo?.year || parsed.year,
-          season: parsed.season, episode: parsed.episode,
-          size: st.size, mtime: st.mtimeMs,
-          poster: findPoster(dir, base) || null,
-          specs: parseSpecs(path.basename(file), dir),
-        };
-        if (!item.poster) {
-          const gen = posterOutFor(file);
-          if (fs.existsSync(gen)) item.poster = gen;
-          else queueCover(file, (p) => {
-            if (!p) return;
-            item.poster = p;
-            saveLibrary();
-            notifyLibrary();
-          });
-        }
-        next.push(item);
-      }
-    }
-    next.sort((a, b) => b.mtime - a.mtime);
-    library = next;
-    saveLibrary();
+async function cancelScan() {
+  scanGeneration++;
+  const worker = scanWorker; scanWorker = null;
+  if (worker) await worker.terminate();
+}
+async function scanLibrary() {
+  const cancellation = cancelScan();
+  const generation = scanGeneration;
+  await cancellation;
+  if (generation !== scanGeneration || quitting) return;
+  const worker = new Worker(path.join(__dirname, 'scan-worker.js'), {
+    workerData: { folders: settings.libraryFolders || [], dbPath: path.join(app.getPath('userData'), 'aurora.db') },
+  });
+  scanWorker = worker;
+  const progress = value => {
+    libraryScanStatus = value;
+    if (homeWin && !homeWin.isDestroyed()) homeWin.webContents.send('library:scan-status', value);
+  };
+  progress({ state: 'scanning', count: 0 });
+  let settled = false;
+  worker.on('message', message => {
+    if (generation !== scanGeneration) return;
+    if (message.type === 'progress') { progress({ state: 'scanning', count: message.count }); return; }
+    if (message.type === 'error') { settled = true; progress({ state: 'error', message: message.message }); return; }
+    if (message.type !== 'complete') return;
+    settled = true;
+    library = message.items;
+    libraryChanges.clear();
     notifyLibrary();
-  } finally {
-    scanning = false;
-  }
+    progress({ state: message.errors.length ? 'incomplete' : 'complete', count: library.length,
+      message: message.errors.length ? '部分目录不可访问或达到扫描上限，已保留旧记录。可稍后重试。' : undefined });
+    for (const item of library) if (!item.poster) {
+      queueCover(item.path, poster => {
+        if (!poster || generation !== scanGeneration) return;
+        const current = library.find(row => row.path === item.path);
+        if (!current) return;
+        db.mediaUpdatePoster(item.path, poster);
+        current.poster = poster;
+        notifyLibraryChanges(current);
+      });
+    }
+  });
+  worker.on('error', error => {
+    settled = true;
+    if (generation === scanGeneration) progress({ state: 'error', message: error.message });
+  });
+  worker.on('exit', code => {
+    if (scanWorker === worker) scanWorker = null;
+    if (!settled && generation === scanGeneration) progress({ state: 'error', message: '扫描提前结束：' + code });
+  });
 }
 
 /* ---------------- 托盘（规范 §4 TrayMenu；bgCasting 待机模式宿主） ---------------- */
@@ -1031,12 +1016,14 @@ ipcMain.handle('recent:list', () => readRecent());
 ipcMain.handle('dlna:state', () => dlnaState);
 ipcMain.handle('settings:get', () => settings);
 ipcMain.handle('settings:set', (_e, patch) => {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('无效设置');
   const dlnaKeys = ['dlnaEnabled', 'dlnaFriendlyName'];
   const needDlnaRestart = dlnaKeys.some((k) => k in patch && patch[k] !== settings[k]);
   const foldersChanged = 'libraryFolders' in patch
     && JSON.stringify(patch.libraryFolders) !== JSON.stringify(settings.libraryFolders);
-  settings = { ...settings, ...patch };
-  writeSettings();
+  const next = { ...settings, ...patch };
+  writeJson(SETTINGS_FILE(), next);
+  settings = next;
   if ('hdrMode' in patch || 'hdrAlgo' in patch
     || 'targetPeak' in patch || 'targetContrast' in patch
     || 'saturation' in patch || 'hdrPeakPercentile' in patch) {
@@ -1048,8 +1035,7 @@ ipcMain.handle('settings:set', (_e, patch) => {
     if (currentPath && mpvProc) applyAudioSettings();
   }
   if (needDlnaRestart) {
-    if (dlnaProc) { dlnaProc.kill(); dlnaProc = null; }
-    startDlna();
+    restartDlna();
   }
   if (foldersChanged) scanLibrary();
   return settings;
@@ -1093,14 +1079,20 @@ ipcMain.handle('visual:import', async () => {
 
 /* 媒体库 */
 ipcMain.handle('library:list', () => library);
-ipcMain.handle('library:clear', () => {   // 清空条目（保留文件夹配置，重扫可重建）
+ipcMain.handle('library:scan-status', () => libraryScanStatus);
+ipcMain.handle('library:clear', async () => {
+  covers.cancel();
+  await cancelScan();
+  clearTimeout(libraryNotifyTimer); libraryNotifyTimer = null; libraryChanges.clear();   // 清空条目（保留文件夹配置，重扫可重建）
+  db.clearMedia();
   library = [];
-  saveLibrary();
+  libraryScanStatus = { state: 'complete', count: 0 };
+  if (homeWin && !homeWin.isDestroyed()) homeWin.webContents.send('library:scan-status', libraryScanStatus);
   notifyLibrary();
   return true;
 });
 ipcMain.handle('recent:clear', () => { db.recentClear(); return true; });
-ipcMain.handle('library:rescan', () => { scanLibrary(); return true; });
+ipcMain.handle('library:rescan', async () => { await scanLibrary(); return true; });
 
 /* 收藏 + 播放列表 + 合集（SQLite；D35） */
 ipcMain.handle('fav:list', () => db.favoriteList());
@@ -1200,12 +1192,12 @@ ipcMain.handle('hdr:override', async (_e, o) => {
 /* 缩略图查询：时间 → 最近帧 file:// URL（按实际帧数比例映射，缓存未就绪返回 null） */
 ipcMain.handle('thumbs:nearest', (_e, time) => {
   if (!thumbs) return null;
-  if (!thumbs.files) {
+  if (!thumbs.files?.length || thumbProc) {
     try { thumbs.files = fs.readdirSync(thumbs.dir).filter((f) => f.endsWith('.jpg')).sort(); } catch { return null; }
   }
   const len = thumbs.files.length;
   if (!len) return null;
-  const idx = Math.min(Math.max(0, Math.floor((time / thumbs.duration) * len)), len - 1);
+  const idx = Math.min(Math.max(0, Math.floor(time / thumbs.interval)), len - 1);
   return 'file:///' + path.join(thumbs.dir, thumbs.files[idx]).replace(/\\/g, '/');
 });
 
@@ -1233,8 +1225,9 @@ ipcMain.handle('app:toggle-fullscreen', () => {
 ipcMain.handle('app:retry', (_e, software) => {
   const file = currentPath;
   if (!file) return false;
-  if (software) forceSoftwareDecode = true;
-  startPlayback(file);
+  forceSoftwareDecode = !!software;
+  recoveryAttempts = 0;
+  startPlayback(file, lastStatus.timePos || 0, casting, true);
   return true;
 });
 
@@ -1390,7 +1383,7 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', (_e, argv) => {
-    const f = argv.slice(2).find((a) => fs.existsSync(a) && fs.statSync(a).isFile());
+    const f = fileFromArgs(argv);
     if (f) startPlayback(path.resolve(f));
     else showHome();
   });
@@ -1410,15 +1403,16 @@ if (!gotLock) {
     createTray();
     startDlna();
     updater.init();
-    if ((settings.libraryFolders || []).length) scanLibrary();
     // 命令行带视频文件路径时直接播放（文件关联/拖放 exe 的基础）
-    const fileArg = process.argv.slice(2).find((a) => fs.existsSync(a) && fs.statSync(a).isFile());
+    const fileArg = fileFromArgs(process.argv);
     if (fileArg) startPlayback(path.resolve(fileArg));
     else createHomeWindow();
+    if ((settings.libraryFolders || []).length) scanLibrary();
   });
 
   app.on('before-quit', () => {
     quitting = true;
+    covers.cancel(); cancelScan();
     stopPlayback();
     if (dlnaProc) { dlnaProc.kill(); dlnaProc = null; }
   });

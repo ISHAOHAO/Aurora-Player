@@ -1,62 +1,96 @@
-# Aurora Player 发版与自动更新指南
+# Aurora Player 构建与发布指南
 
-本项目的自动更新机制：**electron-builder 打包 + electron-updater 静默自动更新**，
-版本真相源托管在 **Gitee**（国内访问稳定，不需自建服务器）。
+应用版本以 `app/package.json` 为准，并同步 `app/package-lock.json` 顶层和根包版本。当前构建版本为 **1.0.1**：汇总 1.0.0 之后的修复与体验优化，按补丁版本递增。确定版本并生成安装包不等于已经公开发布。
 
-## 约束背景
-- 未购买代码签名证书 → 不静默弹窗要求手动下载，改用「启动后台检查 → 自动下载 → 退出时静默安装」。
-- 安装作用域为 **per-user**（装到 `%LOCALAPPDATA%`），免管理员、免 UAC。
-- 无签名代价：更新后首次启动会弹一次 Windows SmartScreen「未知发布者」，点「仍要运行」即可。
+## 环境准备
 
-## 产物
-- `release/AuroraPlayer-Setup-<ver>.exe` — NSIS 安装包（自动更新载体，支持文件关联勾选 + 自选安装目录）
-- `release/AuroraPlayer-Setup-<ver>.exe.blockmap` — 差分包（仅下变化字节）
-- `release/AuroraPlayer-Setup-<ver>.msi` — MSI 安装包（仅作首次/手动安装渠道，electron-updater 不认 MSI）
-- `release/latest.yml` — electron-builder 生成的标准更新清单
-- `update/latest.yml` — 改写为 Gitee 绝对直链版的真相源（提交进仓库）
+使用 Windows x64、Node.js 24.13.0 或经验证的兼容版本。在项目根目录执行：
 
-## 本地打包
-```bash
-# 0. 同步 mpv 运行时（extraResources 从 app/runtime/mpv 取，二者均被 gitignore）
-#    根目录 runtime/mpv 是 canonical 副本，build 前需保证 app/runtime/mpv 存在：
-mkdir -p app/runtime && cp -r runtime/mpv app/runtime/mpv
-# 1. 装依赖（首次需要，electron-builder 装在独立目录 .eb-deps 避免 prune rolldown）
-#    见下方"构建环境"说明
-# 2. 渲染层构建
-npm run build
-# 3. 打包 NSIS + MSI（不自动发布）
-npm run dist:win          # 等价于 electron-builder --win nsis msi --publish never
+```powershell
+npm ci --prefix app
+npm ci --prefix build-tools
 ```
 
+`app/package-lock.json` 固定应用依赖；`build-tools/package-lock.json` 固定 electron-builder 及构建工具，避免依赖机器上的全局命令或 `.eb-deps`。
 
-## 发布到 Gitee（发版三步）
-1. Gitee 仓库 →「管理 → 发行版」→ 新建发行版，标签 `v<版本号>`（基于 `main`）。
-2. 上传附件：`release/AuroraPlayer-Setup-<ver>.exe` + `.exe.blockmap` + `.msi`。
-3. 生成并提交真相源：
-   ```bash
-   node scripts/publish-gitee.js        # 读取 release/latest.yml → 写 update/latest.yml
-   git add update/latest.yml
-   git commit -m "release: v<版本号>"
-   git push origin main
-   ```
+Electron 首次使用可能下载二进制。受限环境可将下载缓存放进项目目录，而无需更改安全限制：
 
-完成后，已装此版 `.exe` 的用户启动 App 即自动检查 → 后台下载 → 退出时静默安装。
+```powershell
+$env:electron_config_cache = Join-Path (Get-Location) '.eb-cache/electron'
+node app/node_modules/electron/install.js
+$env:ELECTRON_BUILDER_CACHE = Join-Path (Get-Location) '.eb-cache'
+```
 
-## 构建环境注意（Windows / 沙箱）
-- 用 `NODE_OPTIONS=""` 去掉注入的超时 trash 垫片；必要时整体提权/关闭沙箱。
-- electron-builder 装在项目根独立目录 `.eb-deps`（避免 npm prune 掉 vite 的 rolldown 平台包）；
-  npm cache 挪到项目内 `.npm-cache`。
-- 镜像：
-  - `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`
-  - `ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/`
-- `package.json` 里 `build.npmRebuild:false`（本项目无原生模块，否则会锁住 electron.exe 导致 rename 死锁）。
-- MSI 在沙箱/无 Windows Installer 服务环境会卡在 `light.exe` 的 ICE 校验（`LGHT0217: Windows Installer Service could not be accessed`）。已通过 `build.msi.additionalLightArgs: ["-sval"]` 跳过整套 MSI 校验解决（不影响安装功能）。
-- electron-builder 26.x 已移除顶层 `build.msi` 对象；MSI 选项只接受 `oneClick/perMachine/runAfterFinish/createDesktopShortcut/createStartMenuShortcut/menuCategory/shortcutName/upgradeCode/warningsAsErrors/additionalWixArgs/additionalLightArgs`，**没有** `allowToChangeInstallationDirectory`（该选项仅 NSIS 有）。
+## mpv 运行时
 
-## 文件关联
-安装时「文件关联」勾选页让用户选择是否绑定 `.mp4/.mkv/.avi/.mov/.flv/.wmv/.webm/.ts/.m2ts/.mpeg/.mpg`。
-注册表写在 `HKCU\Software\Classes`（per-user），卸载时仅清理本程序写入的关联。
+唯一来源是根目录 `runtime/mpv`。无需复制到 app/runtime。
 
-## 版本号
-单一真相源 = `app/package.json` 的 `version`。打包文件名、`latest.yml`、App 内「关于」展示全由其派生。
-发版前先改 `version` 再打包。
+`app/build-resources/runtime-manifest.json` 固定 mpv.exe、mpv.com 和 d3dcompiler_43.dll 的 SHA-256。需取得与清单一致的 Windows x64 发行文件；有意升级时同时审查二进制来源、版本和清单，再验证播放。不要为了让构建通过而直接替换散列。
+
+```powershell
+npm --prefix app run runtime:check
+```
+
+开发态从项目根目录查找 mpv；打包态从 Electron resourcesPath/runtime/mpv 查找。
+
+## 检查与打包
+
+```powershell
+npm --prefix app run check
+npm --prefix app run dist:win
+```
+
+`check` 顺序执行回归检查、HDR 测试、视觉测试、类型检查和 Vite 构建。`dist:win` 先执行这些门槛及运行时校验，再生成 NSIS EXE 与 MSI，不自动发布。
+
+`dist:win` 调用 `scripts/package-win.js`：构建中间文件保存在 `.release-build/v<版本>/`，可交付文件汇集到 `release/v<版本>/`。使用已有 Electron 本地运行时，避免重复下载；默认不上传发布。
+
+每次变更版本，先编写 `docs/releases/RELEASE-NOTES-v<版本>.md`。打包脚本核对版本和锁文件，验证 EXE 与更新清单的 SHA-512/大小，复制 EXE、MSI、blockmap、latest.yml 和版本说明，并生成 SHA256SUMS.txt。若该版本目录已有安装产物，脚本会停止，避免覆盖；应先归档上一构建或递增版本。
+
+当前目录约定：
+
+```text
+release/
+├── README.md                 # 最新版本入口与归档说明
+├── v1.0.1/                   # 当前安装包、版本说明、更新元数据、校验和
+└── archive/v1.0.0/           # 旧版说明、元数据与历史候选安装包
+.release-build/
+├── v1.0.1/                  # 当前 win-unpacked、打包日志及暂存产物
+└── archive/v1.0.0/           # 旧构建中间文件
+```
+
+`release/` 和 `.release-build/` 均不入库；版本说明的可追踪源文件保存在 `docs/releases/`。build-tools 自身的包版本独立于应用版本，无需随应用递增。
+
+MSI 当前保留 `-sval` 跳过 ICE 校验的兼容配置，因此仍须在有 Windows Installer 服务的测试环境完成安装验证，不能把生成 MSI 当作完整安装验收。
+
+## 文件打开方式
+
+安装时可选择把 Aurora 添加到视频文件的“打开方式”，仅写入应用自己的 ProgID 和 OpenWithProgids 值。默认播放器仍由用户在 Windows 中选择。
+
+卸载只删除本应用拥有的值，保留扩展名键和第三方子键。升级卸载阶段保留关联偏好。历史旧版曾覆盖扩展名默认值而没有备份；不能恢复未知的历史默认值，只能在该值仍指向 Aurora 时清理它。
+
+## 更新机制
+
+- 更新源：Gitee main 分支的 update/latest.yml。
+- 包地址：Gitee Release 附件，在清单中使用绝对地址。
+- NSIS 是自动更新载体；MSI 用于手动安装渠道。
+- 开发态不访问生产更新源，界面显示不可用原因。
+- 关于页读取最新状态快照，再接收后续状态变化。
+- SHA-512 校验下载文件与清单一致；它不独立证明发布者身份，也不能替代发布源保护或代码签名。
+
+## 发布前验收
+
+1. 选择新的正式版本号，重新运行检查和打包。
+2. 在测试环境验证冷/热文件关联打开、中文/空格路径、安装/升级/卸载。
+3. 用测试更新源验证同版本、有新版本、失败清单、断网、已下载后重进关于页、重启安装。
+4. 复验 HDR/GPU、跨屏、手机/NAS 和长时间投屏。
+5. 保留测试环境、素材、日志和结论，更新偏差清单与发布说明。
+
+## 发布到 Gitee
+
+验证完成后，创建对应版本的发行版，从 `release/v<版本>/` 上传 EXE、EXE.blockmap、MSI，并附上版本说明和校验和。然后生成清单：
+
+```powershell
+node app/scripts/publish-gitee.js
+```
+
+脚本只读取与 app/package.json 相同版本目录中的 latest.yml，并拒绝版本不匹配的清单。人工核对版本、散列和附件直链后再提交 update/latest.yml。脚本生成清单不等于已经上传附件或公开发布。仅在本地整理版本时，不运行此发布清单写入步骤，生产清单继续指向已发布版本。

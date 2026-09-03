@@ -6,6 +6,7 @@
 import { REGISTRY, getBuiltinTheme, listThemes, cloneTheme } from '../renderer/src/visual/registry';
 import { resolve } from '../renderer/src/visual/resolver';
 import { STATE_BUDGETS } from '../renderer/src/visual/types';
+import { LightingEngine } from '../renderer/src/visual/engines/LightingEngine';
 import { VisualStore } from '../renderer/src/visual/store';
 import type { VisualTheme } from '../renderer/src/visual/types';
 import { videoMaskPolygon } from '../renderer/src/visual/engines/FluidEngine';
@@ -164,6 +165,28 @@ check('Aqua dark accent 存在', accents.size === 1);
   check('reset 后 identity 回 Aqua', VisualStore.activeThemeId === 'aqua');
   const noUserSelected = VisualStore.listPresets().filter((p) => p.id === VisualStore.activeThemeId && p.source === 'user').length === 0;
   check('内置主题选择不被 user preset 混淆', noUserSelected);
+
+  const engine = new LightingEngine();
+  let samples = 0;
+  const runtime = globalThis as unknown as { window: { aurora: { getThumb: () => Promise<null> } } };
+  runtime.window = { aurora: { getThumb: async () => { samples++; return null; } } };
+  const source = { kind: 'frame' as const, fileId: 'a', posterUrl: null };
+  const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+  engine.requestPalette(source, () => {}); await settle();
+  check('frame initial miss attempted', samples === 1);
+  await new Promise(resolve => setTimeout(resolve, 510));
+  engine.requestPalette(source, () => {}); await settle();
+  check('frame null result retried', samples === 2);
+  engine.setThumbTime(10);
+  engine.requestPalette(source, () => {}); await settle();
+  check('frame time bucket samples again', samples === 3);
+  let resolveOld: (value: null) => void = () => {};
+  runtime.window.aurora.getThumb = () => new Promise(resolve => { resolveOld = resolve; });
+  engine.setThumbTime(20);
+  let staleCalls = 0;
+  engine.requestPalette(source, () => { staleCalls++; });
+  engine.unmount(); resolveOld(null); await settle();
+  check('disposed lighting drops late result', staleCalls === 0);
 
   console.log(`RESULT ok=${ok} fail=${fail}`);
   process.exit(fail ? 1 : 0);

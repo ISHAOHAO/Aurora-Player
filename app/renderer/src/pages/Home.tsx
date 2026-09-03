@@ -45,6 +45,21 @@ export default function Home() {
   const [recent, setRecent] = useState<RecentItem[]>([]);
   const [dlna, setDlna] = useState<DlnaState | null>(null);
   const [library, setLibrary] = useState<LibraryItem[]>([]);
+  const [scanMessage, setScanMessage] = useState('');
+  useEffect(() => window.aurora.onDlnaState(setDlna), []);
+  useEffect(() => {
+    let received = false;
+    const accept = (status: { state: string; count?: number; message?: string }) => setScanMessage(
+      status.message || (status.state === 'scanning' ? `正在扫描媒体库… ${status.count ?? 0}` : '')
+    );
+    const off = window.aurora.onScanStatus(status => { received = true; accept(status); });
+    window.aurora.getScanStatus().then(status => { if (!received) accept(status); });
+    return () => { received = true; off(); };
+  }, []);
+  useEffect(() => window.aurora.onLibraryChanged(items => {
+    const changed = new Map(items.map(item => [item.path, item]));
+    setLibrary(previous => previous.map(item => changed.get(item.path) || item));
+  }), []);
   const [urlModal, setUrlModal] = useState(false);
   const [url, setUrl] = useState('');
   const [nasModal, setNasModal] = useState(false);
@@ -122,8 +137,9 @@ export default function Home() {
           </div>
           <div className="dlna-badge">
             <div className={`dot${dlna?.running ? '' : ' off'}`} />
-            <span>{dlna?.running ? `DLNA 在线 · ${dlna.friendlyName}` : 'DLNA 启动中…'}</span>
+            <span title={dlna?.firewallWarning}>{dlna?.running ? `DLNA 在线 · ${dlna.friendlyName}` : 'DLNA 未运行'}{dlna?.firewallWarning ? ' · 检查防火墙' : ''}</span>
           </div>
+          {scanMessage && <span role="status">{scanMessage}</span>}
           <div className="global-search">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
             <input

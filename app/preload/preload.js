@@ -13,6 +13,11 @@ contextBridge.exposeInMainWorld('aurora', {
   stop: () => ipcRenderer.invoke('app:stop'),
   getRecent: () => ipcRenderer.invoke('recent:list'),
   getDlnaState: () => ipcRenderer.invoke('dlna:state'),
+  onDlnaState: (cb) => {
+    const listener = (_e, state) => cb(state);
+    ipcRenderer.on('dlna:updated', listener);
+    return () => ipcRenderer.removeListener('dlna:updated', listener);
+  },
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
   visualGet: () => ipcRenderer.invoke('visual:get'),
@@ -20,6 +25,7 @@ contextBridge.exposeInMainWorld('aurora', {
   visualExport: (theme) => ipcRenderer.invoke('visual:export', theme),
   visualImport: () => ipcRenderer.invoke('visual:import'),
   getLibrary: () => ipcRenderer.invoke('library:list'),
+  getScanStatus: () => ipcRenderer.invoke('library:scan-status'),
   rescanLibrary: () => ipcRenderer.invoke('library:rescan'),
   clearLibrary: () => ipcRenderer.invoke('library:clear'),
   clearRecent: () => ipcRenderer.invoke('recent:clear'),
@@ -43,6 +49,16 @@ contextBridge.exposeInMainWorld('aurora', {
     const listener = (_e, items) => cb(items);
     ipcRenderer.on('library:updated', listener);
     return () => ipcRenderer.removeListener('library:updated', listener);
+  },
+  onLibraryChanged: (cb) => {
+    const listener = (_e, items) => cb(items);
+    ipcRenderer.on('library:changed', listener);
+    return () => ipcRenderer.removeListener('library:changed', listener);
+  },
+  onScanStatus: (cb) => {
+    const listener = (_e, state) => cb(state);
+    ipcRenderer.on('library:scan-status', listener);
+    return () => ipcRenderer.removeListener('library:scan-status', listener);
   },
   onRecentUpdated: (cb) => {
     const listener = () => cb();
@@ -71,6 +87,7 @@ contextBridge.exposeInMainWorld('aurora', {
 
   // —— 自动更新 ——
   updateCheck: () => ipcRenderer.invoke('update:check'),
+  getUpdateStatus: () => ipcRenderer.invoke('update:get-status'),
   updateInstallNow: () => ipcRenderer.invoke('update:install-now'),
   onUpdateStatus: (cb) => {
     const listener = (_e, status) => cb(status);

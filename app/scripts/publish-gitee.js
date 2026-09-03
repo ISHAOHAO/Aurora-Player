@@ -1,5 +1,5 @@
 /**
- * 把 electron-builder 产出的 release/latest.yml 改写为 Gitee 绝对直链版，
+ * 把 release/v<应用版本>/latest.yml 改写为 Gitee 绝对直链版，
  * 落到仓库根 update/latest.yml（版本真相源）。
  *
  * 为什么：electron-updater 的 generic provider 会读取 latest.yml 里的 files[].url；
@@ -14,7 +14,8 @@ const path = require('path');
 
 const REPO = 'is-haohao/Aurora-Player';
 const ROOT = path.resolve(__dirname, '..', '..');
-const SRC = path.join(ROOT, 'release', 'latest.yml');
+const appVersion = require('../package.json').version;
+const SRC = path.join(ROOT, 'release', `v${appVersion}`, 'latest.yml');
 const DST = path.join(ROOT, 'update', 'latest.yml');
 
 if (!fs.existsSync(SRC)) {
@@ -29,6 +30,7 @@ if (!verMatch) {
   process.exit(1);
 }
 const version = verMatch[1].trim().replace(/^v/, '');
+if (version !== appVersion) throw new Error('清单版本与应用版本不一致，停止生成生产更新清单。');
 const base = `https://gitee.com/${REPO}/releases/download/v${version}/`;
 
 // 把 files 块里的 - url: 与顶层 path: 改写为 Gitee 绝对直链（保留 sha512/size）

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Settings } from '../bridge.d';
+import type { Settings, UpdateStatus } from '../bridge.d';
 import { WindowControls, ResizeZones, dragHandler, useWindowDragRelease } from '../components/WindowChrome';
 import { VisualSystem } from '../visual/controller';
 
@@ -12,11 +12,18 @@ const GROUPS: [Group, string][] = [
 /** 一次性动作按钮：点击执行 → 短暂显示"已完成" */
 function ActionButton({ label, doneLabel, action }: { label: string; doneLabel: string; action: () => Promise<unknown> }) {
   const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   return (
-    <button className="seg-action" disabled={done}
-      onClick={async () => { await action(); setDone(true); setTimeout(() => setDone(false), 1500); }}>
+    <><button className="seg-action" disabled={done || busy}
+      onClick={async () => {
+        setBusy(true); setError('');
+        try { await action(); setDone(true); setTimeout(() => setDone(false), 1500); }
+        catch (e) { setError(e instanceof Error ? e.message : '操作失败，请重试'); }
+        finally { setBusy(false); }
+      }}>
       {done ? doneLabel : label}
-    </button>
+    </button>{error && <span role="alert">{error}</span>}</>
   );
 }
 
@@ -28,19 +35,29 @@ function AboutGroup() {
 
   useEffect(() => {
     window.aurora.getAppVersion().then(setVersion);
-    const off = window.aurora.onUpdateStatus(setStatus);
-    return off;
+    let active = true;
+    const accept = (next: UpdateStatus) => {
+      if (active) setStatus(prev => (next.revision ?? 0) >= (prev.revision ?? 0) ? next : prev);
+    };
+    const off = window.aurora.onUpdateStatus(accept);
+    window.aurora.getUpdateStatus().then(accept).catch(() => {});
+    return () => { active = false; off(); };
   }, []);
 
   const check = async () => {
     setChecking(true);
-    const r = await window.aurora.updateCheck();
-    setChecking(false);
-    if (!r.ok) setStatus({ state: 'error', message: r.error });
+    try {
+      const r = await window.aurora.updateCheck();
+      if (!r.ok) throw new Error(r.error || '检查失败');
+    } catch (e) {
+      setStatus(prev => ({ ...prev, state: 'error', message: e instanceof Error ? e.message : '检查失败' }));
+      throw e;
+    } finally { setChecking(false); }
   };
 
   const statusText: Record<string, string> = {
     idle: '未检查',
+    unavailable: status.message || '当前环境不支持更新',
     checking: '正在检查更新…',
     available: `发现新版本 ${status.version ?? ''}`,
     latest: '已是最新版本',

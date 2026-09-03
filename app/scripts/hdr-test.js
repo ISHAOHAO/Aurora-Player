@@ -53,8 +53,8 @@ eq('调参注入对比度', d.props['target-contrast'], 1000);
 eq('调参注入饱和度', d.props.saturation, 0.1);
 eq('调参注入峰值百分位', d.props['hdr-peak-percentile'], 99.5);
 d = decide({ gamma: 'pq' }, { hdr: false }, {}, {});
-eq('未调参不注入 target-peak', d.props['target-peak'], undefined);
-eq('未调参不注入 saturation', d.props.saturation, undefined);
+eq('未调参恢复 target-peak 自动值', d.props['target-peak'], 'auto');
+eq('未调参恢复 saturation 零值', d.props.saturation, 0);
 
 console.log(`\n结果：${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);
