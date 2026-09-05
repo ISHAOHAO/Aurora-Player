@@ -1,55 +1,27 @@
-/**
- * 把 release/v<应用版本>/latest.yml 改写为 Gitee 绝对直链版，
- * 落到仓库根 update/latest.yml（版本真相源）。
- *
- * 为什么：electron-updater 的 generic provider 会读取 latest.yml 里的 files[].url；
- * 我们把安装包本体放在 Gitee release 附件（稳定下载地址），用绝对直链写入，
- * 与 raw 托管的 latest.yml 解耦，且国内访问稳定。
- *
- * 用法（打包完成后）：
- *   node scripts/publish-gitee.js
- */
-const fs = require('fs');
-const path = require('path');
-
-const REPO = 'is-haohao/Aurora-Player';
-const ROOT = path.resolve(__dirname, '..', '..');
-const appVersion = require('../package.json').version;
-const SRC = path.join(ROOT, 'release', `v${appVersion}`, 'latest.yml');
-const DST = path.join(ROOT, 'update', 'latest.yml');
-
-if (!fs.existsSync(SRC)) {
-  console.error('找不到', SRC, '\n请先运行打包：npm run dist:win');
-  process.exit(1);
+/** Generate staged Gitee attachments. Never publish a production manifest implicitly. */
+const fs = require('node:fs');
+const path = require('node:path');
+const { splitRelease } = require('./split-release');
+const { matches } = require('../main/split-update');
+async function main() {
+  const version = require('../package.json').version;
+  const root = path.resolve(__dirname, '../..');
+  const dir = path.join(root, 'release', `v${version}`);
+  const yaml = fs.readFileSync(path.join(dir, 'latest.yml'), 'utf8');
+  if (yaml.match(/^version:\s*(.+)$/m)?.[1].trim() !== version) throw new Error('清单版本不匹配');
+  const exe = `AuroraPlayer-Setup-${version}.exe`;
+  const sha512 = yaml.match(/^sha512:\s*(.+)$/m)?.[1].trim();
+  const file = path.join(dir, exe);
+  if (!sha512 || !await matches(file, fs.statSync(file).size, sha512)) throw new Error('安装包与打包清单校验值不匹配');
+  const base = `https://gitee.com/is-haohao/Aurora-Player/releases/download/v${version}/`;
+  const out = path.join(dir, 'gitee-split');
+  await splitRelease(file, version, out, base);
+  // MSI is a separate manual-install channel, never the automatic updater target.
+  const msi = path.join(dir, `AuroraPlayer-Setup-${version}.msi`);
+  if (fs.existsSync(msi)) await splitRelease(msi, version, path.join(out, 'msi'), base);
+  console.log('已生成分片与待发布清单：', out);
+  console.log('上传 EXE 分片到对应 Gitee 发行版后，先运行 node app/scripts/verify-split-release.js <latest-split.json路径>。');
+  console.log('验证成功后，才将 EXE 的 latest-split.json 复制到 update/latest-split.json 并提交。');
+  console.log('MSI 分片位于 msi 子目录，仅供手动合并。原 update/latest.yml 保持不变。');
 }
-
-const yaml = fs.readFileSync(SRC, 'utf8');
-const verMatch = yaml.match(/^version:\s*(.+)$/m);
-if (!verMatch) {
-  console.error('无法从 latest.yml 解析 version');
-  process.exit(1);
-}
-const version = verMatch[1].trim().replace(/^v/, '');
-if (version !== appVersion) throw new Error('清单版本与应用版本不一致，停止生成生产更新清单。');
-const base = `https://gitee.com/${REPO}/releases/download/v${version}/`;
-
-// 把 files 块里的 - url: 与顶层 path: 改写为 Gitee 绝对直链（保留 sha512/size）
-const out = yaml
-  .replace(/^(\s*-\s*url:\s*)(.+)$/gm, (_, p, u) => `${p}${base}${path.basename(u.trim())}`)
-  .replace(/^path:\s*(.+)$/m, (_, p) => `path: ${base}${path.basename(p.trim())}`);
-
-fs.mkdirSync(path.dirname(DST), { recursive: true });
-fs.writeFileSync(DST, out);
-
-console.log('已生成', DST);
-console.log('版本', version, '| 安装包直链前缀', base);
-console.log('\n请将以下文件上传到 Gitee 发行版 v' + version + '：');
-const files = [...out.matchAll(/^\s*-\s*url:\s*(.+)$/gm)].map((m) => '  ' + path.basename(m[1].trim()));
-// 顶层 path 也是安装包
-const topPath = out.match(/^path:\s*(.+)$/m);
-if (topPath) {
-  const name = path.basename(topPath[1].trim());
-  if (!files.some((f) => f.includes(name))) files.push('  ' + name);
-}
-console.log(files.join('\n'));
-console.log('\n上传后提交 update/latest.yml 即可生效。');
+main().catch(e => { console.error(e.message); process.exitCode = 1; });

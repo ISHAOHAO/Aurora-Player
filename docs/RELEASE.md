@@ -1,6 +1,6 @@
 # Aurora Player 构建与发布指南
 
-应用版本以 `app/package.json` 为准，并同步 `app/package-lock.json` 顶层和根包版本。当前构建版本为 **1.0.1**：汇总 1.0.0 之后的修复与体验优化，按补丁版本递增。确定版本并生成安装包不等于已经公开发布。
+应用版本以 `app/package.json` 为准，并同步 `app/package-lock.json` 顶层和根包版本。当前构建版本为 **1.0.2**：新增 Gitee 分片下载、校验和合并更新。确定版本并生成安装包不等于已经公开发布。
 
 ## 环境准备
 
@@ -70,8 +70,8 @@ MSI 当前保留 `-sval` 跳过 ICE 校验的兼容配置，因此仍须在有 W
 
 ## 更新机制
 
-- 更新源：Gitee main 分支的 update/latest.yml。
-- 包地址：Gitee Release 附件，在清单中使用绝对地址。
+- 更新源：Gitee main 分支的 update/latest-split.json（旧客户端仍读取 latest.yml）。
+- 包地址：Gitee Release 分片附件，在清单中使用绝对地址，客户端校验并合并。
 - NSIS 是自动更新载体；MSI 用于手动安装渠道。
 - 开发态不访问生产更新源，界面显示不可用原因。
 - 关于页读取最新状态快照，再接收后续状态变化。
@@ -87,10 +87,32 @@ MSI 当前保留 `-sval` 跳过 ICE 校验的兼容配置，因此仍须在有 W
 
 ## 发布到 Gitee
 
-验证完成后，创建对应版本的发行版，从 `release/v<版本>/` 上传 EXE、EXE.blockmap、MSI，并附上版本说明和校验和。然后生成清单：
+验证完成后，先生成待发布分片，再按下一节上传附件和验证，最后提交更新清单：
 
 ```powershell
 node app/scripts/publish-gitee.js
 ```
 
-脚本只读取与 app/package.json 相同版本目录中的 latest.yml，并拒绝版本不匹配的清单。人工核对版本、散列和附件直链后再提交 update/latest.yml。脚本生成清单不等于已经上传附件或公开发布。仅在本地整理版本时，不运行此发布清单写入步骤，生产清单继续指向已发布版本。
+脚本读取与 app/package.json 相同版本目录中的 latest.yml，验证安装包后生成分片。生成不等于已经上传或公开发布；生产清单需要在远程验证后单独提交。
+
+## Gitee 免费分片发布（新客户端）
+
+新客户端读取 `update/latest-split.json`，从 Gitee Release 下载最多 80MiB 的分片，按清单顺序流式合并，再校验完整 EXE 的 SHA-512。每片最多尝试三次；失败后重新检查更新会复用已校验的分片。当前不提供单片内部断点续传和差量下载。下载缓存位于用户数据目录的 `split-updates`；保留缓存用于重试，请预留约两倍安装包大小的磁盘空间，历史缓存可在应用退出后手动清理。
+
+下载完成不会在普通退出时安装。用户点击“退出并打开安装向导”后，客户端重新校验 EXE，成功启动 NSIS 向导才退出播放器。向导继续处理安装位置、权限提示和完成后的启动选项。哈希证明文件与清单一致；发布者仍须保护 Gitee 账号、主分支和清单，哈希不能替代代码签名。
+
+### 发布顺序
+
+1. 修改版本号（package.json 与 package-lock.json 一致），运行 `npm run dist:win` 生成包含新更新器的安装包。不要把旧的 v1.0.1 安装包当成包含本次修改的版本。
+2. 在 app 目录运行 `npm run release:manifest`。脚本检查打包清单中的版本和 EXE SHA-512，在 `release/v<版本>/gitee-split/` 生成 EXE 分片和 `latest-split.json`，MSI 分片及其独立清单位于 `msi/`。不会修改生产 `update/latest.yml` 或 `update/latest-split.json`。
+3. 将 EXE 的所有 `.partNNN` 附件上传到同名 Gitee Release。需要提供 MSI 时，再上传 MSI 分片。附件名不要改动。若 Gitee 实际附件地址与生成的地址不同，修改待发布 JSON 中各片的 URL；大小和哈希保持不变。
+4. 从仓库根运行 `node app/scripts/verify-split-release.js release/v<版本>/gitee-split/latest-split.json`。它会匿名下载所有远程分片并验证最终文件；失败时不要发布清单。需要保留合并文件时，可追加一个尚不存在的输出 EXE 路径。MSI 同理，使用 msi 子目录清单并指定 .msi 输出路径。
+5. 做一次旧安装版到新安装版的 Windows 升级验证。然后将 EXE 清单复制为 `update/latest-split.json` 并提交发布。不要将 MSI 清单放进自动更新入口。清单最后发布，版本附件不可原地替换。
+
+### 首次迁移
+
+不含分片更新器的旧客户端无法识别新 JSON，需要用户手动安装一次新版。可以提供已合并完整包的免费备用下载渠道，或让有 Node.js 的用户使用上述验证脚本合并下载。旧 `latest.yml` 仅为旧更新协议保留，不要向其中写入分片地址。新客户端首次发布前缺少 `latest-split.json` 会显示更新错误，不会自动回退到旧协议。
+
+### 验证边界
+
+本地测试覆盖分片合并、缓存复用、损坏重试、完整校验失败、错误清单及版本比较。Gitee 的附件类型/数量/容量规则、匿名直链、实际大陆下载速度和真实 Windows 安装升级必须另行验证；本地生成分片不代表已上传或平台已接受。

@@ -62,8 +62,8 @@ function AboutGroup() {
     available: `发现新版本 ${status.version ?? ''}`,
     latest: '已是最新版本',
     downloading: `正在下载更新 ${status.percent ?? 0}%`,
-    downloaded: `新版本 ${status.version ?? ''} 已下载，重启后安装`,
-    error: `更新检查失败：${status.message ?? ''}`,
+    downloaded: `新版本 ${status.version ?? ''} 已校验，点击安装更新`,
+    error: `更新失败：${status.message ?? ''}`,
   };
 
   return (
@@ -92,7 +92,14 @@ function AboutGroup() {
       {status.state === 'downloaded' && (
         <div className="srow">
           <span>安装更新</span>
-          <button className="seg-action" onClick={() => window.aurora.updateInstallNow()}>立即重启安装</button>
+          <button className="seg-action" onClick={async () => {
+            try {
+              const result = await window.aurora.updateInstallNow();
+              if (!result.ok) throw new Error(result.error || '启动安装失败');
+            } catch (e) {
+              setStatus(prev => ({ ...prev, state: 'error', message: e instanceof Error ? e.message : '启动安装失败' }));
+            }
+          }}>退出并打开安装向导</button>
         </div>
       )}
       <div className="srow">

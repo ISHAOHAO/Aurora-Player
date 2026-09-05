@@ -261,7 +261,7 @@ export interface AuroraBridge {
   updateCheck: () => Promise<{ ok: boolean; updateAvailable?: boolean; error?: string }>;
   getUpdateStatus: () => Promise<UpdateStatus>;
   /** 自动更新：立即退出并安装已下载的更新 */
-  updateInstallNow: () => Promise<{ ok: boolean }>;
+  updateInstallNow: () => Promise<{ ok: boolean; error?: string }>;
   /** 自动更新：状态推送（检查中/下载进度/已下载待重启/错误） */
   onUpdateStatus: (cb: (s: UpdateStatus) => void) => () => void;
   /** 应用版本号 */

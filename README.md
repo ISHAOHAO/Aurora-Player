@@ -1,10 +1,6 @@
 # Aurora Player
 
 <p align="center">
-  <img src="assets/Aurora_Player_logo.png" width="96" height="96" alt="Aurora Player logo">
-</p>
-
-<p align="center">
   <img src="assets/Aurora_Player_banner.png" alt="Aurora Player banner">
 </p>
 
@@ -13,6 +9,22 @@
 Aurora Player 是一款面向 Windows 11 的桌面视频播放器，以「电影镜头、粒子视觉与舞台」为设计语言，在 mpv 解码内核之上构建了完整的沉浸式体验：自绘控制层、HDR 画质决策、DLNA 投屏（MediaRenderer）、本地媒体库海报墙与 NAS/SMB 在线浏览。
 
 ---
+
+## 📥 下载 Windows 安装包
+
+当前版本：**1.0.2** · 支持 Windows 10 / 11（64 位）。普通用户直接下载安装包，无需配置 Node.js 或 mpv。
+
+| 下载渠道 | 适用人群 | 下载链接 |
+| --- | --- | --- |
+| 夸克网盘 | 使用夸克网盘的用户（提取码：F7XE） | [下载 Aurora Player v1.0.2](https://pan.quark.cn/s/bc703e5a4ee8) |
+| 百度网盘 | 使用百度网盘的用户（提取码: ddbq） | [下载 Aurora Player v1.0.2](https://pan.baidu.com/s/146DdZKdDDEij2Gk3Yaj2Hw?pwd=ddbq) |
+| 123云盘 | 使用123云盘的用户（提取码：sDFc） | [下载 Aurora Player v1.0.2](https://1828328483.share.123pan.cn/123pan/H7XSjv-BXKoH?pwd=sDFc#) |
+| GitHub Releases | 使用 GitHub 的用户，需查看版本说明与源码 | [下载 Aurora Player v1.0.2](https://github.com/ISHAOHAO/Aurora-Player/releases/tag/v1.0.2) |
+| Gitee 发行版 | 查看版本说明与分片附件 | [查看发行版](https://gitee.com/is-haohao/Aurora-Player/releases/tag/v1.0.2) |
+
+推荐下载并运行 `AuroraPlayer-Setup-1.0.2.exe`；需要 MSI 的用户可选择 `AuroraPlayer-Setup-1.0.2.msi`。安装包已包含播放运行时。
+
+Gitee 的 `.partNNN` 文件是安装包分片，不能直接双击安装。首次安装及 1.0.1 或更早版本升级，请从完整包渠道下载安装包。1.0.2 起支持应用内自动下载、校验并合并分片，完成后在「设置 → 关于」点击安装更新；该功能需发布者上传附件并发布更新清单后可用。
 
 ## ✨ 特性
 
@@ -103,7 +115,7 @@ aurora-player/
 
 ---
 
-## 🚀 安装步骤
+## 🚀 从源码运行（开发者）
 
 ### 1. 环境要求
 

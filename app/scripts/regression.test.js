@@ -33,26 +33,37 @@ test('refreshing recent metadata preserves resume position', () => {
 
 function updaterFixture(packaged) {
   const handlers = new Map();
-  const updater = new EventEmitter();
-  updater.setFeedURL = config => assert.equal(config.provider, 'generic');
-  updater.checkForUpdates = async () => ({ isUpdateAvailable: false, updateInfo: { version: '1.0.0' } });
+  const updater = {
+    readManifest: async () => ({ version: '1.0.0' }),
+    newer: (a, b) => a !== b,
+    download: async () => 'installer.exe',
+    matches: async () => true,
+  };
+  let quits = 0, launches = 0;
+  const childProcess = { spawn: () => {
+    launches++;
+    const child = new EventEmitter(); child.unref = () => {};
+    queueMicrotask(() => child.emit('spawn'));
+    return child;
+  } };
   const module = { exports: {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../main/updater.js'), 'utf8'), {
     module, console, setTimeout: () => ({ unref() {} }),
-    require: id => id === 'electron-updater' ? { autoUpdater: updater } : {
-      app: { isPackaged: packaged }, ipcMain: { handle: (name, fn) => handlers.set(name, fn) },
+    require: id => id === './split-update' ? updater : id === 'node:child_process' ? { spawn: (...args) => childProcess.spawn(...args) } : id.startsWith('node:') ? require(id) : {
+      app: { isPackaged: packaged, getVersion: () => '1.0.0', getPath: () => os.tmpdir(), quit: () => { quits++; } }, ipcMain: { handle: (name, fn) => handlers.set(name, fn) },
       BrowserWindow: { getAllWindows: () => [] },
     },
   });
   module.exports.init();
-  return { handlers, updater };
+  return { handlers, updater, counts: () => ({ quits, launches }), childProcess };
 }
 
-test('updater initializes provider, reports no-update correctly and retains latest status', async () => {
+test('split updater reports no-update correctly and retains downloaded status', async () => {
   const { handlers, updater } = updaterFixture(true);
   assert.ok(handlers.has('update:check'));
   assert.equal((await handlers.get('update:check')()).updateAvailable, false);
-  updater.emit('update-downloaded', { version: '1.1.0' });
+  updater.readManifest = async () => ({ version: '1.1.0' });
+  assert.equal((await handlers.get('update:check')()).updateAvailable, true);
   assert.equal(handlers.get('update:get-status')().state, 'downloaded');
 });
 
@@ -60,6 +71,34 @@ test('development updater handlers return unavailable without contacting product
   const { handlers } = updaterFixture(false);
   assert.ok(handlers.has('update:check'));
   assert.equal((await handlers.get('update:check')()).ok, false);
+});
+
+test('split updater coalesces checks and verifies before starting installer', async () => {
+  const f = updaterFixture(true);
+  let downloads = 0;
+  f.updater.readManifest = async () => ({ version: '1.0.2' });
+  f.updater.download = async () => { downloads++; return 'installer.exe'; };
+  await Promise.all([f.handlers.get('update:check')(), f.handlers.get('update:check')()]);
+  assert.equal(downloads, 1);
+  assert.equal((await f.handlers.get('update:install-now')()).ok, true);
+  assert.deepEqual(f.counts(), { launches: 1, quits: 1 });
+});
+
+test('tampered installer and failed launch never quit the player', async () => {
+  for (const tampered of [true, false]) {
+    const f = updaterFixture(true);
+    f.updater.readManifest = async () => ({ version: '1.0.2' });
+    await f.handlers.get('update:check')();
+    f.updater.matches = async () => !tampered;
+    f.childProcess.spawn = () => { throw new Error('launch failed'); };
+    assert.equal((await f.handlers.get('update:install-now')()).ok, false);
+    assert.equal(f.counts().quits, 0);
+    assert.equal(f.handlers.get('update:get-status')().state, 'error');
+    if (!tampered) {
+      await f.handlers.get('update:check')();
+      assert.equal(f.handlers.get('update:get-status')().state, 'downloaded');
+    }
+  }
 });
 
 test('packaged and development launches keep file arguments; resume honors settings', () => {
