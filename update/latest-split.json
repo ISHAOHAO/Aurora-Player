@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "version": "1.0.2",
+  "platform": "win32-x64",
+  "size": 137073479,
+  "sha512": "Vz2IhIygNyio8ugDWeRKGEfGe3sqr6X5JMhtpY9j5TWxAYGb3wJliB4rAFr6H0b2/DGeJftnwlY7M+S8BJ16Ow==",
+  "parts": [
+    {
+      "url": "https://gitee.com/is-haohao/Aurora-Player/releases/download/v1.0.2/AuroraPlayer-Setup-1.0.2.exe.part001",
+      "size": 83886080,
+      "sha512": "V/KFe0Myf07fzrjOUMcOFUS2apcpDJYeLUn6XfGGNqEZfj4BguMXiOvdP1jzOddrht7dYD7IqxWWUmz7G5YyPQ=="
+    },
+    {
+      "url": "https://gitee.com/is-haohao/Aurora-Player/releases/download/v1.0.2/AuroraPlayer-Setup-1.0.2.exe.part002",
+      "size": 53187399,
+      "sha512": "MHs06fkncHwNt3TYL5GRoll7mFQ+mXVSCjxSFtKXbBN5DASruofyb1sedERMfgqRX2SQKjz+yVqxMETxXf5rpQ=="
+    }
+  ]
+}
