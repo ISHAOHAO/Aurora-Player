@@ -10,6 +10,7 @@ import { LightingEngine } from '../renderer/src/visual/engines/LightingEngine';
 import { VisualStore } from '../renderer/src/visual/store';
 import type { VisualTheme } from '../renderer/src/visual/types';
 import { videoMaskPolygon } from '../renderer/src/visual/engines/FluidEngine';
+import { resolveThemePreference } from '../renderer/src/theme';
 
 let ok = 0, fail = 0;
 function check(name: string, cond: boolean) {
@@ -37,6 +38,11 @@ for (const t of REGISTRY) {
   accents.add(resolve(t, { state: 'browse', appearance: 'dark' }).cssVars['--vs-accent']);
 }
 check('Aqua dark accent 存在', accents.size === 1);
+
+/* 2a. 主题偏好：auto 始终由实时系统外观解析，手动值不受系统影响 */
+check('theme auto + light system → light', resolveThemePreference('auto', true) === 'light');
+check('theme auto + dark system → dark', resolveThemePreference('auto', false) === 'dark');
+check('theme manual dark ignores system', resolveThemePreference('dark', true) === 'dark');
 
 /* 2b. Appearance 独立维度（问题 1）：Light/Dark 产出不同且语义正确 */
 {

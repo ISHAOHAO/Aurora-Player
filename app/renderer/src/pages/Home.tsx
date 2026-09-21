@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
-import type { CSSProperties } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { DlnaState, LibraryItem, NasEntry, RecentItem } from '../bridge.d';
 import { WindowControls, ResizeZones, dragHandler, useWindowDragRelease } from '../components/WindowChrome';
 import { PlaybackProbe } from '../visual/playback';
+import { applyThemePreference } from '../theme';
 
 /** 媒体库筛选（D27）：电影=无剧集号，剧集=有 episode；动漫/纪录片需刮削元数据，暂并入 */
 type LibFilter = 'all' | 'movie' | 'tv';
@@ -28,17 +29,57 @@ function posterStyle(p?: string | null): CSSProperties | undefined {
   };
 }
 
-function toggleTheme() {
-  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-  document.documentElement.dataset.theme = next;
-  localStorage.setItem('aurora-theme', next);
-}
-
 function fmtRemain(it: RecentItem): string {
   if (it.position == null || !it.duration) return '';
   const pct = Math.round((it.position / it.duration) * 100);
   const remain = Math.max(0, Math.round((it.duration - it.position) / 60));
   return `已看 ${pct}% · 剩余 ${remain} 分钟`;
+}
+
+function Modal({ titleId, className = '', onClose, children }: {
+  titleId: string;
+  className?: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const page = document.querySelector<HTMLElement>('.page');
+    const consoleButton = document.querySelector<HTMLElement>('#vs-console-btn');
+    if (page) page.inert = true;
+    if (consoleButton) consoleButton.inert = true;
+    const frame = requestAnimationFrame(() => {
+      dialogRef.current?.querySelector<HTMLElement>('input, button, [tabindex]:not([tabindex="-1"])')?.focus();
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      if (page) page.inert = false;
+      if (consoleButton) consoleButton.inert = false;
+      previous?.focus();
+    };
+  }, []);
+
+  const trapFocus = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
+    if (e.key !== 'Tab') return;
+    const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(
+      'input:not(:disabled), button:not(:disabled), [tabindex]:not([tabindex="-1"])'
+    ) ?? [])];
+    if (!focusable.length) return;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+
+  return (
+    <div className="url-modal-mask" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div ref={dialogRef} className={`url-modal${className ? ` ${className}` : ''}`}
+        role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={trapFocus}>
+        {children}
+      </div>
+    </div>
+  );
 }
 
 export default function Home() {
@@ -62,11 +103,15 @@ export default function Home() {
   }), []);
   const [urlModal, setUrlModal] = useState(false);
   const [url, setUrl] = useState('');
+  const [urlError, setUrlError] = useState('');
+  const [urlBusy, setUrlBusy] = useState(false);
   const [nasModal, setNasModal] = useState(false);
   const [nasInput, setNasInput] = useState('');
   const [nasPath, setNasPath] = useState('');   // 当前浏览目录，'' = 地址输入模式
   const [nasEntries, setNasEntries] = useState<NasEntry[] | null>(null);
   const [nasMsg, setNasMsg] = useState<{ text: string; unc?: string; needAuth?: boolean; ok?: boolean } | null>(null);
+  const [nasBusy, setNasBusy] = useState(false);
+  const nasRequest = useRef(0);
   const [libFilter, setLibFilter] = useState<LibFilter>('all');
   const [query, setQuery] = useState('');
 
@@ -94,12 +139,36 @@ export default function Home() {
   const q = query.trim().toLowerCase();
   const libMatches = q ? library.filter((it) => (it.title || '').toLowerCase().includes(q) || (it.name || '').toLowerCase().includes(q)) : [];
   const recentMatches = q ? recent.filter((it) => (it.name || '').toLowerCase().includes(q)) : [];
-  const playUrl = () => {
+  const toggleTheme = async () => {
+    const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    try {
+      const settings = await window.aurora.setSettings({ theme: next });
+      applyThemePreference(settings.theme);
+    } catch {
+      setScanMessage('主题切换失败，请稍后重试');
+    }
+  };
+  const playUrl = async () => {
     const u = url.trim();
     if (!u) return;
-    setUrlModal(false);
-    setUrl('');
-    window.aurora.openPath(u);
+    let parsed: URL;
+    try { parsed = new URL(u); }
+    catch {
+      setUrlError('请输入有效的 HTTP 或 HTTPS 媒体地址');
+      return;
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      setUrlError('仅支持 HTTP 或 HTTPS 地址');
+      return;
+    }
+    setUrlBusy(true); setUrlError('');
+    try {
+      await window.aurora.openPath(u);
+      setUrlModal(false);
+      setUrl('');
+    } catch (e) {
+      setUrlError(e instanceof Error ? e.message : '无法打开该网络媒体');
+    } finally { setUrlBusy(false); }
   };
   const addNas = async () => {
     const input = nasInput.trim();
@@ -108,16 +177,29 @@ export default function Home() {
   };
   /** 在线浏览：列目录，不入库 */
   const browseNas = async (dir: string) => {
+    const request = ++nasRequest.current;
+    setNasBusy(true);
     setNasMsg({ text: '正在连接…' });
     setNasEntries(null);
-    const r = await window.aurora.listNas(dir);
-    if (r.ok) {
-      setNasPath(r.unc!);
-      setNasEntries(r.entries || []);
-      setNasMsg(null);
-    } else {
-      setNasMsg({ text: r.error || '连接失败', unc: r.unc, needAuth: r.needAuth });
-    }
+    try {
+      const r = await window.aurora.listNas(dir);
+      if (request !== nasRequest.current) return;
+      if (r.ok) {
+        setNasPath(r.unc!);
+        setNasEntries(r.entries || []);
+        setNasMsg(null);
+      } else {
+        setNasMsg({ text: r.error || '连接失败', unc: r.unc, needAuth: r.needAuth });
+      }
+    } catch (e) {
+      if (request === nasRequest.current) {
+        setNasMsg({ text: e instanceof Error ? e.message : '连接失败，请重试' });
+      }
+    } finally { if (request === nasRequest.current) setNasBusy(false); }
+  };
+  const closeNas = () => {
+    nasRequest.current++;
+    setNasBusy(false); setNasModal(false); setNasMsg(null); setNasPath(''); setNasEntries(null);
   };
   /** 上级目录（到 \\服务器\共享 为止） */
   const nasUp = () => {
@@ -152,7 +234,7 @@ export default function Home() {
             {query && <button className="clear" onClick={() => setQuery('')} title="清除">✕</button>}
           </div>
           <div className="spacer" />
-          <button className="icon-btn theme-toggle" title="切换浅色/暗色" onClick={toggleTheme}>
+          <button className="icon-btn theme-toggle" title="切换浅色/暗色" onClick={() => void toggleTheme()}>
             <svg className="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
             <svg className="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
           </button>
@@ -261,7 +343,7 @@ export default function Home() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
             <div>本地媒体<small>浏览文件与文件夹</small></div>
           </button>
-          <button className="tile" onClick={() => setUrlModal(true)}>
+          <button className="tile" onClick={() => { setUrlError(''); setUrlModal(true); }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.9 5.7 3.9 9S14.5 18.4 12 21c-2.5-2.6-3.9-5.7-3.9-9S9.5 5.6 12 3z"/></svg>
             <div>网络媒体<small>HTTP / HLS / 串流地址</small></div>
           </button>
@@ -349,36 +431,38 @@ export default function Home() {
 
       {/* 网络媒体 URL 弹窗 */}
       {urlModal && (
-        <div className="url-modal-mask" onClick={() => setUrlModal(false)}>
-          <div className="url-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>打开网络媒体</h3>
+        <Modal titleId="url-modal-title" onClose={() => { if (!urlBusy) setUrlModal(false); }}>
+            <h3 id="url-modal-title">打开网络媒体</h3>
             <input
               autoFocus
+              aria-label="网络媒体地址"
               placeholder="粘贴 HTTP / HLS / 串流地址…"
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') playUrl(); if (e.key === 'Escape') setUrlModal(false); }}
+              onChange={(e) => { setUrl(e.target.value); setUrlError(''); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') void playUrl(); }}
             />
+            {urlError && <div className="nas-msg error" role="alert">{urlError}</div>}
             <div className="ops">
-              <button onClick={() => setUrlModal(false)}>取消</button>
-              <button className="primary" onClick={playUrl}>播放</button>
+              <button disabled={urlBusy} onClick={() => setUrlModal(false)}>取消</button>
+              <button className="primary" disabled={urlBusy || !url.trim()} onClick={() => void playUrl()}>
+                {urlBusy ? '正在打开…' : '播放'}
+              </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
       {/* NAS/SMB 在线浏览弹窗 */}
       {nasModal && (
-        <div className="url-modal-mask" onClick={() => { setNasModal(false); setNasMsg(null); setNasPath(''); setNasEntries(null); }}>
-          <div className="url-modal nas-browser" onClick={(e) => e.stopPropagation()}>
-            <h3>NAS / SMB</h3>
+        <Modal titleId="nas-modal-title" className="nas-browser" onClose={closeNas}>
+            <h3 id="nas-modal-title">NAS / SMB</h3>
             {!nasPath ? (
               <>
                 <input
                   autoFocus
+                  aria-label="NAS 或 SMB 共享路径"
                   placeholder="\\服务器\共享（如 \\NAS\movies）"
                   value={nasInput}
                   onChange={(e) => { setNasInput(e.target.value); setNasMsg(null); }}
-                  onKeyDown={(e) => { if (e.key === 'Enter') addNas(); if (e.key === 'Escape') setNasModal(false); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && !nasBusy) addNas(); }}
                 />
                 {nasMsg && (
                   <div className={`nas-msg${nasMsg.ok ? ' ok' : ''}`}>
@@ -389,8 +473,10 @@ export default function Home() {
                   </div>
                 )}
                 <div className="ops">
-                  <button onClick={() => setNasModal(false)}>取消</button>
-                  <button className="primary" onClick={addNas}>连接</button>
+                  <button disabled={nasBusy} onClick={closeNas}>取消</button>
+                  <button className="primary" disabled={nasBusy || !nasInput.trim()} onClick={addNas}>
+                    {nasBusy ? '正在连接…' : '连接'}
+                  </button>
                 </div>
               </>
             ) : (
@@ -416,7 +502,7 @@ export default function Home() {
                   ))}
                 </div>
                 <div className="ops">
-                  <button onClick={() => { setNasModal(false); setNasPath(''); setNasEntries(null); }}>关闭</button>
+                  <button onClick={closeNas}>关闭</button>
                 </div>
                 {nasMsg && (
                   <div className={`nas-msg${nasMsg.ok ? ' ok' : ''}`}>
@@ -428,8 +514,7 @@ export default function Home() {
                 )}
               </>
             )}
-          </div>
-        </div>
+        </Modal>
       )}
     </>
   );

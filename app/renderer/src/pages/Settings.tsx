@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Settings, UpdateStatus } from '../bridge.d';
 import { WindowControls, ResizeZones, dragHandler, useWindowDragRelease } from '../components/WindowChrome';
 import { VisualSystem } from '../visual/controller';
+import { applyThemePreference } from '../theme';
 
 type Group = 'play' | 'video' | 'audio' | 'sub' | 'lib' | 'dlna' | 'ui' | 'about';
 
@@ -10,19 +11,33 @@ const GROUPS: [Group, string][] = [
 ];
 
 /** 一次性动作按钮：点击执行 → 短暂显示"已完成" */
-function ActionButton({ label, doneLabel, action }: { label: string; doneLabel: string; action: () => Promise<unknown> }) {
+function ActionButton({ label, doneLabel, confirmLabel, action }: {
+  label: string;
+  doneLabel: string;
+  confirmLabel?: string;
+  action: () => Promise<unknown>;
+}) {
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [armed, setArmed] = useState(false);
   const [error, setError] = useState('');
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (confirmTimer.current) clearTimeout(confirmTimer.current); }, []);
   return (
     <><button className="seg-action" disabled={done || busy}
       onClick={async () => {
+        if (confirmLabel && !armed) {
+          setArmed(true);
+          if (confirmTimer.current) clearTimeout(confirmTimer.current);
+          confirmTimer.current = setTimeout(() => setArmed(false), 4000);
+          return;
+        }
         setBusy(true); setError('');
-        try { await action(); setDone(true); setTimeout(() => setDone(false), 1500); }
+        try { await action(); setDone(true); setArmed(false); setTimeout(() => setDone(false), 1500); }
         catch (e) { setError(e instanceof Error ? e.message : '操作失败，请重试'); }
         finally { setBusy(false); }
       }}>
-      {done ? doneLabel : label}
+      {done ? doneLabel : busy ? '处理中…' : armed ? confirmLabel : label}
     </button>{error && <span role="alert">{error}</span>}</>
   );
 }
@@ -109,36 +124,53 @@ function AboutGroup() {
   );
 }
 
-function applyTheme(theme: Settings['theme']) {
-  if (theme === 'auto') {
-    localStorage.removeItem('aurora-theme');
-    document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-  } else {
-    localStorage.setItem('aurora-theme', theme);
-    document.documentElement.dataset.theme = theme;
-  }
-}
-
 export default function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
   const [group, setGroup] = useState<Group>('play');
   const [shaderFiles, setShaderFiles] = useState<string[]>([]);
   const [shaderMsg, setShaderMsg] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState('');
+  const pendingPatch = useRef<Partial<Settings>>({});
+  const patchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useWindowDragRelease();
 
   useEffect(() => {
     window.aurora.getSettings().then((st) => {
       setS(st);
+      applyThemePreference(st.theme);
       if (st.shaderDir) window.aurora.shaderList().then(setShaderFiles);
-    });
+    }).catch((e) => setSettingsError(e instanceof Error ? e.message : '设置加载失败'));
   }, []);
 
   const patch = async (p: Partial<Settings>) => {
-    const next = await window.aurora.setSettings(p);
-    setS(next);
-    if ('theme' in p) applyTheme(next.theme);
+    setSettingsError('');
+    try {
+      const next = await window.aurora.setSettings(p);
+      setS(next);
+      if ('theme' in p) applyThemePreference(next.theme);
+      return next;
+    } catch (e) {
+      setSettingsError(e instanceof Error ? e.message : '设置保存失败，请重试');
+      throw e;
+    }
   };
+  const commit = (p: Partial<Settings>) => { void patch(p).catch(() => {}); };
+  const schedulePatch = (p: Partial<Settings>) => {
+    setS((current) => current ? { ...current, ...p } : current);
+    pendingPatch.current = { ...pendingPatch.current, ...p };
+    if (patchTimer.current) clearTimeout(patchTimer.current);
+    patchTimer.current = setTimeout(() => {
+      const next = pendingPatch.current;
+      pendingPatch.current = {};
+      patchTimer.current = null;
+      commit(next);
+    }, 160);
+  };
+  useEffect(() => () => {
+    if (patchTimer.current) clearTimeout(patchTimer.current);
+    if (Object.keys(pendingPatch.current).length) void window.aurora.setSettings(pendingPatch.current).catch(() => {});
+  }, []);
 
   if (!s) return <div className="settings-page"><div className="settings-body">加载中…</div></div>;
 
@@ -151,29 +183,34 @@ export default function SettingsPage() {
         <WindowControls />
       </header>
       <div className="settings-main">
-        <nav className="settings-nav">
+        <nav className="settings-nav" aria-label="设置分组">
           {GROUPS.map(([k, label]) => (
-            <button key={k} className={group === k ? 'on' : ''} onClick={() => setGroup(k)}>{label}</button>
+            <button key={k} className={group === k ? 'on' : ''} aria-current={group === k ? 'page' : undefined}
+              onClick={() => setGroup(k)}>{label}</button>
           ))}
         </nav>
         <div className="settings-body">
+        {settingsError && <div className="settings-error" role="alert">{settingsError}</div>}
         {group === 'play' && (
           <>
             <div className="srow">
               <span>记住播放进度</span>
-              <button className={`switch${s.rememberPosition ? ' on' : ''}`} onClick={() => patch({ rememberPosition: !s.rememberPosition })} />
+              <button className={`switch${s.rememberPosition ? ' on' : ''}`} role="switch"
+                aria-label="记住播放进度" aria-checked={s.rememberPosition}
+                onClick={() => commit({ rememberPosition: !s.rememberPosition })} />
             </div>
             <div className="srow">
               <span>滚轮音量步进</span>
               <div className="seg">
                 {[2, 5, 10].map((v) => (
-                  <button key={v} className={s.volumeStep === v ? 'on' : ''} onClick={() => patch({ volumeStep: v })}>{v}%</button>
+                  <button key={v} className={s.volumeStep === v ? 'on' : ''} aria-pressed={s.volumeStep === v}
+                    onClick={() => commit({ volumeStep: v })}>{v}%</button>
                 ))}
               </div>
             </div>
             <div className="srow">
               <span>最近播放记录</span>
-              <ActionButton label="清除记录" doneLabel="已清除" action={() => window.aurora.clearRecent()} />
+              <ActionButton label="清除记录" confirmLabel="再次点击确认" doneLabel="已清除" action={() => window.aurora.clearRecent()} />
             </div>
           </>
         )}
@@ -183,7 +220,8 @@ export default function SettingsPage() {
               <span>HDR 默认模式</span>
               <div className="seg">
                 {[['auto', '自动'], ['passthrough', '直通'], ['tonemap', '色调映射']].map(([v, l]) => (
-                  <button key={v} className={s.hdrMode === v ? 'on' : ''} onClick={() => patch({ hdrMode: v })}>{l}</button>
+                  <button key={v} className={s.hdrMode === v ? 'on' : ''} aria-pressed={s.hdrMode === v}
+                    onClick={() => commit({ hdrMode: v })}>{l}</button>
                 ))}
               </div>
             </div>
@@ -191,7 +229,8 @@ export default function SettingsPage() {
               <span>默认色调映射算法</span>
               <div className="seg">
                 {['spline', 'bt.2390', 'bt.2446a', 'hable', 'mobius', 'reinhard', 'clip'].map((a) => (
-                  <button key={a} className={s.hdrAlgo === a ? 'on' : ''} onClick={() => patch({ hdrAlgo: a })}>{a}</button>
+                  <button key={a} className={s.hdrAlgo === a ? 'on' : ''} aria-pressed={s.hdrAlgo === a}
+                    onClick={() => commit({ hdrAlgo: a })}>{a}</button>
                 ))}
               </div>
             </div>
@@ -208,7 +247,7 @@ export default function SettingsPage() {
                 <span>已启用 Shader<small>{s.shaders.length} / {shaderFiles.length || '?'}</small></span>
                 <div className="seg">
                   {(shaderFiles.length ? shaderFiles : s.shaders).map((f) => (
-                    <button key={f} className={s.shaders.includes(f) ? 'on' : ''}
+                    <button key={f} className={s.shaders.includes(f) ? 'on' : ''} aria-pressed={s.shaders.includes(f)}
                       onClick={async () => {
                         const next = s.shaders.includes(f) ? s.shaders.filter((x) => x !== f) : [...s.shaders, f];
                         const r = await window.aurora.shaderApply(next);
@@ -228,42 +267,51 @@ export default function SettingsPage() {
             <div className="srow">
               <span>默认音量<span className="val timecode"> {s.defaultVolume}%</span></span>
               <input type="range" min={30} max={100} value={s.defaultVolume}
-                onChange={(e) => patch({ defaultVolume: +e.target.value })} />
+                aria-label="默认音量" aria-valuetext={`${s.defaultVolume}%`}
+                onChange={(e) => schedulePatch({ defaultVolume: +e.target.value })} />
             </div>
             <div className="srow">
               <span>增益<span className="val timecode"> {s.audioGain > 0 ? '+' : ''}{s.audioGain} dB</span></span>
               <input type="range" min={-60} max={30} value={s.audioGain}
-                onChange={(e) => patch({ audioGain: +e.target.value })} />
+                aria-label="音频增益" aria-valuetext={`${s.audioGain > 0 ? '+' : ''}${s.audioGain} dB`}
+                onChange={(e) => schedulePatch({ audioGain: +e.target.value })} />
             </div>
             <div className="srow">
               <span>ReplayGain</span>
               <div className="seg">
                 {[['off', '关闭'], ['track', '单曲'], ['album', '专辑']].map(([v, l]) => (
-                  <button key={v} className={s.replayGain === v ? 'on' : ''} onClick={() => patch({ replayGain: v as Settings['replayGain'] })}>{l}</button>
+                  <button key={v} className={s.replayGain === v ? 'on' : ''} aria-pressed={s.replayGain === v}
+                    onClick={() => commit({ replayGain: v as Settings['replayGain'] })}>{l}</button>
                 ))}
               </div>
             </div>
             <div className="srow">
               <span>动态归一化<small>（dynaudnorm）</small></span>
-              <button className={`switch${s.audioNormalize ? ' on' : ''}`} onClick={() => patch({ audioNormalize: !s.audioNormalize })} />
+              <button className={`switch${s.audioNormalize ? ' on' : ''}`} role="switch"
+                aria-label="动态归一化" aria-checked={s.audioNormalize}
+                onClick={() => commit({ audioNormalize: !s.audioNormalize })} />
             </div>
             <div className="srow">
               <span>声道映射</span>
               <div className="seg">
                 {[['auto-safe', '自动'], ['stereo', '立体声'], ['5.1', '5.1'], ['7.1', '7.1']].map(([v, l]) => (
-                  <button key={v} className={s.audioChannels === v ? 'on' : ''} onClick={() => patch({ audioChannels: v })}>{l}</button>
+                  <button key={v} className={s.audioChannels === v ? 'on' : ''} aria-pressed={s.audioChannels === v}
+                    onClick={() => commit({ audioChannels: v })}>{l}</button>
                 ))}
               </div>
             </div>
             <div className="srow">
               <span>WASAPI 独占<small>（自动采样率切换，设备占用时回退）</small></span>
-              <button className={`switch${s.audioExclusive ? ' on' : ''}`} onClick={() => patch({ audioExclusive: !s.audioExclusive })} />
+              <button className={`switch${s.audioExclusive ? ' on' : ''}`} role="switch"
+                aria-label="WASAPI 独占" aria-checked={s.audioExclusive}
+                onClick={() => commit({ audioExclusive: !s.audioExclusive })} />
             </div>
             <div className="srow">
               <span>Bitstream 透传<small>（SPDIF/HDMI）</small></span>
               <div className="seg">
                 {[['none', '关闭'], ['ac3', 'AC-3'], ['eac3', 'E-AC-3'], ['dts', 'DTS'], ['dts-hd', 'DTS-HD'], ['true-hd', 'TrueHD']].map(([v, l]) => (
-                  <button key={v} className={s.audioBitstream === v ? 'on' : ''} onClick={() => patch({ audioBitstream: v })}>{l}</button>
+                  <button key={v} className={s.audioBitstream === v ? 'on' : ''} aria-pressed={s.audioBitstream === v}
+                    onClick={() => commit({ audioBitstream: v })}>{l}</button>
                 ))}
               </div>
             </div>
@@ -273,7 +321,8 @@ export default function SettingsPage() {
           <div className="srow">
             <span>默认字幕字号<span className="val timecode"> {s.subFontSize}</span></span>
             <input type="range" min={20} max={56} step={2} value={s.subFontSize}
-              onChange={(e) => patch({ subFontSize: +e.target.value })} />
+              aria-label="默认字幕字号" aria-valuetext={`${s.subFontSize}`}
+              onChange={(e) => schedulePatch({ subFontSize: +e.target.value })} />
           </div>
         )}
         {group === 'lib' && (
@@ -284,7 +333,8 @@ export default function SettingsPage() {
             {(s.libraryFolders || []).map((f) => (
               <div className="srow" key={f}>
                 <span className="folder-path" title={f}>{f}</span>
-                <button className="seg-action" onClick={() => patch({ libraryFolders: (s.libraryFolders || []).filter((x) => x !== f) })}>移除</button>
+                <ActionButton label="移除" confirmLabel="确认移除" doneLabel="已移除"
+                  action={() => patch({ libraryFolders: (s.libraryFolders || []).filter((x) => x !== f) })} />
               </div>
             ))}
             <div className="srow">
@@ -297,7 +347,7 @@ export default function SettingsPage() {
             </div>
             <div className="srow">
               <span>清空媒体库<small>（清除已刮削条目，保留文件夹配置）</small></span>
-              <ActionButton label="清空" doneLabel="已清空" action={() => window.aurora.clearLibrary()} />
+              <ActionButton label="清空" confirmLabel="再次点击确认" doneLabel="已清空" action={() => window.aurora.clearLibrary()} />
             </div>
           </>
         )}
@@ -305,22 +355,32 @@ export default function SettingsPage() {
           <>
             <div className="srow">
               <span>启用 DLNA 投屏接收</span>
-              <button className={`switch${s.dlnaEnabled ? ' on' : ''}`} onClick={() => patch({ dlnaEnabled: !s.dlnaEnabled })} />
+              <button className={`switch${s.dlnaEnabled ? ' on' : ''}`} role="switch"
+                aria-label="启用 DLNA 投屏接收" aria-checked={s.dlnaEnabled}
+                onClick={() => commit({ dlnaEnabled: !s.dlnaEnabled })} />
             </div>
             <div className="srow">
               <span>设备名称</span>
-              <input className="text" defaultValue={s.dlnaFriendlyName}
-                onBlur={(e) => e.target.value.trim() && patch({ dlnaFriendlyName: e.target.value.trim() })} />
+              <input className="text" value={s.dlnaFriendlyName} aria-label="DLNA 设备名称"
+                onChange={(e) => setS({ ...s, dlnaFriendlyName: e.target.value })}
+                onBlur={(e) => {
+                  const value = e.target.value.trim();
+                  if (value) commit({ dlnaFriendlyName: value });
+                  else { setS({ ...s, dlnaFriendlyName: 'Aurora Player' }); commit({ dlnaFriendlyName: 'Aurora Player' }); }
+                }} />
             </div>
             <div className="srow">
               <span>后台接收投屏<small>（关闭主窗口后驻留托盘，可被投屏唤起）</small></span>
-              <button className={`switch${s.bgCasting ? ' on' : ''}`} onClick={() => patch({ bgCasting: !s.bgCasting })} />
+              <button className={`switch${s.bgCasting ? ' on' : ''}`} role="switch"
+                aria-label="后台接收投屏" aria-checked={s.bgCasting}
+                onClick={() => commit({ bgCasting: !s.bgCasting })} />
             </div>
             <div className="srow">
               <span>投屏控制权<small>（投屏期间本地操作限制，规格 §8）</small></span>
               <div className="seg">
                 {[['none', '不锁定'], ['takeover', '投屏接管'], ['full', '完全锁定']].map(([v, l]) => (
-                  <button key={v} className={s.lockPolicy === v ? 'on' : ''} onClick={() => patch({ lockPolicy: v as Settings['lockPolicy'] })}>{l}</button>
+                  <button key={v} className={s.lockPolicy === v ? 'on' : ''} aria-pressed={s.lockPolicy === v}
+                    onClick={() => commit({ lockPolicy: v as Settings['lockPolicy'] })}>{l}</button>
                 ))}
               </div>
             </div>
@@ -333,7 +393,8 @@ export default function SettingsPage() {
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <div className="seg">
                   {[['auto', '跟随系统'], ['light', '浅色'], ['dark', '暗色']].map(([v, l]) => (
-                    <button key={v} className={s.theme === v ? 'on' : ''} onClick={() => patch({ theme: v as Settings['theme'] })}>{l}</button>
+                    <button key={v} className={s.theme === v ? 'on' : ''} aria-pressed={s.theme === v}
+                      onClick={() => commit({ theme: v as Settings['theme'] })}>{l}</button>
                   ))}
                 </div>
                 <button className="seg-action" onClick={() => VisualSystem.setConsoleOpen(true)}>打开 Visual Console</button>

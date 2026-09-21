@@ -11,7 +11,7 @@
   --hairline: rgba(255, 255, 255, .06);
   --text-primary: #FFFFFF;
   --text-secondary: #AAAAAA;
-  --text-muted: #707070;
+  --text-muted: #8A8A8A;
   --accent: #4C8DFF;
   --danger: #E5484D;
   --glass-1: rgba(20, 20, 20, .45);
@@ -65,7 +65,7 @@
   --hairline: rgba(0, 0, 0, .08);
   --text-primary: #1A1A1A;
   --text-secondary: #5A5A5A;
-  --text-muted: #8F8F8F;
+  --text-muted: #6B6B6B;
   --accent: #3B76E1;
   --danger: #D93A3F;
   --glass-1: rgba(255, 255, 255, .55);
@@ -210,6 +210,11 @@ body.player[data-vtheme="aqua"] .top-info {
 .settings-nav button:hover { background: var(--surface-hover); color: var(--text-primary); }
 .settings-nav button.on { background: var(--surface-2); color: var(--text-primary); font-weight: 500; }
 .settings-body { position: relative; z-index: 1; flex: 1; padding: 32px 40px; overflow-y: auto; }
+.settings-error {
+  margin-bottom: 12px; padding: 10px 12px; border-radius: var(--radius-ctrl);
+  color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent); font-size: 13px;
+}
 .srow {
   display: flex; align-items: center; justify-content: space-between; gap: 24px;
   padding: 14px 0; border-bottom: 1px solid var(--hairline);
@@ -226,17 +231,21 @@ body.player[data-vtheme="aqua"] .top-info {
 }
 .srow input.text:focus { border-color: var(--accent); }
 .switch {
-  width: 40px; height: 22px; border-radius: 999px; flex-shrink: 0;
-  background: var(--surface-hover); position: relative;
+  width: 44px; height: 40px; border-radius: 999px; flex-shrink: 0;
+  background: transparent; position: relative;
+}
+.switch::before {
+  content: ""; position: absolute; width: 40px; height: 22px; left: 2px; top: 9px;
+  border-radius: 999px; background: var(--surface-hover);
   transition: background var(--dur-fast) var(--ease-out);
 }
 .switch::after {
-  content: ""; position: absolute; top: 3px; left: 3px;
+  content: ""; position: absolute; top: 12px; left: 5px;
   width: 16px; height: 16px; border-radius: 999px; background: #fff;
   transition: transform var(--dur-fast) var(--ease-out);
   box-shadow: 0 1px 3px rgba(0,0,0,.3);
 }
-.switch.on { background: var(--accent); }
+.switch.on::before { background: var(--accent); }
 .switch.on::after { transform: translateX(18px); }
 
 /* ---------- 主题切换按钮 ---------- */
@@ -375,6 +384,13 @@ body.player[data-vtheme="aqua"] .top-info {
 .section-head h2 { font-size: 18px; font-weight: 600; }
 .section-head span { font-size: 12px; color: var(--text-muted); }
 .rail { display: flex; gap: 16px; overflow-x: auto; padding-bottom: 8px; }
+.page, .settings-body, .rail, .nas-list { scrollbar-width: thin; scrollbar-color: var(--hairline) transparent; }
+.page::-webkit-scrollbar, .settings-body::-webkit-scrollbar, .nas-list::-webkit-scrollbar { display: block; width: 7px; }
+.rail::-webkit-scrollbar { display: block; height: 7px; }
+.page::-webkit-scrollbar-thumb, .settings-body::-webkit-scrollbar-thumb,
+.rail::-webkit-scrollbar-thumb, .nas-list::-webkit-scrollbar-thumb {
+  background: var(--hairline); border-radius: 999px;
+}
 .poster { width: 168px; flex-shrink: 0; cursor: pointer; text-align: left;
   transition: transform var(--dur-fast) var(--ease-out); }
 .poster:hover { transform: translateY(-2px); }
@@ -496,6 +512,12 @@ body.player[data-vtheme="aqua"] .top-info {
   box-shadow: 0 1px 4px rgba(0, 0, 0, .6);
   opacity: 0; transition: opacity var(--dur-fast) var(--ease-out);
 }
+.seek-input {
+  position: absolute; z-index: 3; inset: -10px 0; width: 100%; height: 24px;
+  margin: 0; opacity: 0; cursor: pointer; appearance: none;
+}
+.seek-input:disabled { cursor: not-allowed; }
+.seekbar:has(.seek-input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 5px; }
 .seek-zone:hover .knob { opacity: 1; }
 
 .controls-row { display: flex; align-items: center; gap: 4px; color: var(--ov-text); }
@@ -535,6 +557,25 @@ body.player[data-vtheme="aqua"] .top-info {
 @media (prefers-reduced-motion: reduce) {
   .vol-track, .vol-track i, .vol-knob { transition: none !important; }
 }
+
+/* 播放器连接/探测阶段：避免将正常加载误感知为黑屏。 */
+.play-loading {
+  position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 8px; text-align: center;
+  color: var(--ov-text); background: rgba(0,0,0,.28); pointer-events: none;
+}
+.play-loading strong { font-size: 16px; font-weight: 600; }
+.play-loading span { max-width: 360px; font-size: 12px; color: var(--ov-text-2); }
+.play-loading button {
+  pointer-events: auto; margin-top: 8px; min-height: 40px; padding: 0 18px;
+  border-radius: 999px; background: var(--ov-btn-bg); border: 1px solid var(--ov-btn-border);
+}
+.loading-ring {
+  width: 30px; height: 30px; margin-bottom: 4px; border-radius: 50%;
+  border: 2px solid var(--ov-track); border-top-color: var(--accent);
+  animation: loading-spin .8s linear infinite;
+}
+@keyframes loading-spin { to { transform: rotate(360deg); } }
 
 /* ---------- 播放页：CASTING 徽标（规范 §3.5） ---------- */
 .casting-badge {
@@ -738,8 +779,10 @@ body.player[data-vtheme="aqua"] .top-info {
 .url-modal .ops button:hover { background: var(--surface-hover); color: var(--text-primary); }
 .url-modal .ops button.primary { background: var(--btn-primary-bg); color: var(--btn-primary-fg); }
 .url-modal .ops button.primary:hover { opacity: .85; }
+.url-modal .ops button:disabled { opacity: .45; cursor: not-allowed; }
 .nas-msg { font-size: 12px; color: var(--text-muted); line-height: 1.6; margin-top: 10px; }
 .nas-msg.ok { color: var(--accent); }
+.nas-msg.error { color: var(--danger); }
 .nas-msg .link-btn { margin-left: 8px; }
 
 /* ---------- 播放失败错误卡片（规范 §6 四段式；D25） ---------- */

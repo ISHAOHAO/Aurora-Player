@@ -8,7 +8,7 @@ const fs = require('fs');
 const appRoot = path.join(__dirname, '..');
 const outDir = process.env.VISUAL_TEST_OUT || path.join(os.tmpdir(), 'aurora-visual-test');
 const entry = path.join(__dirname, 'visual-test-entry.ts');
-const config = path.join(__dirname, 'visual-test.config.ts');
+const config = path.join(__dirname, 'visual-test.config.mts');
 
 if (!fs.existsSync(entry)) { console.error('缺少 visual-test-entry.ts'); process.exit(1); }
 

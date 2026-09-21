@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { VisualStore } from './store';
 import { VisualSystem } from './controller';
 import { useActiveTheme, usePresentation, useVisualConsoleOpen } from './useVisual';
+import { saveVideoBlob } from './engines/wallpaper-store';
 
 type Tab = 'preset' | 'appearance' | 'atmosphere' | 'particles' | 'motion' | 'player' | 'advanced';
 
@@ -223,9 +224,9 @@ export function VisualConsole() {
                   const f = e.target.files?.[0];
                   if (!f) return;
                   VisualStore.setParam('aqua.backdrop', 'wallpaper');
-                  import('./engines/wallpaper-store').then(({ saveVideoBlob }) => saveVideoBlob(f).then((id) => {
+                  saveVideoBlob(f).then((id) => {
                     if (id) VisualStore.setParam('aqua.wallpaper', id);
-                  }));
+                  }).catch(() => toast('视频壁纸保存失败'));
                   e.target.value = '';
                 }} />
             </label>

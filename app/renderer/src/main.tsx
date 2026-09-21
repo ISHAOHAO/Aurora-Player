@@ -4,6 +4,7 @@ import Home from './pages/Home';
 import Player from './pages/Player';
 import Settings from './pages/Settings';
 import { VisualProvider } from './visual/VisualProvider';
+import { applyThemePreference } from './theme';
 import './styles.css';
 import './visual/visual.css';
 import './visual/fonts.css';
@@ -24,6 +25,10 @@ function useRoute() {
 
 function Root() {
   const route = useRoute();
+  // 后端设置是主题偏好的唯一真源；同时修复旧版首页只写 localStorage 的历史不一致。
+  useEffect(() => {
+    window.aurora.getSettings().then((settings) => applyThemePreference(settings.theme)).catch(() => {});
+  }, []);
   useEffect(() => {
     document.body.classList.remove('home', 'settings', 'player');
     document.body.classList.add(route); // player 路由下 body 透明(叠加窗)

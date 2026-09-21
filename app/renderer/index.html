@@ -5,10 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Aurora Player</title>
   <script>
-    /* 主题初始化：localStorage 优先，否则跟随系统（规范 v1.2 §2.5） */
+    /* 主题初始化：偏好与解析后的明暗分离，避免 auto 在运行时丢失 */
     (function () {
       var saved = localStorage.getItem('aurora-theme');
-      var theme = saved || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+      var preference = saved === 'light' || saved === 'dark' ? saved : 'auto';
+      var theme = preference === 'auto'
+        ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+        : preference;
+      document.documentElement.dataset.themePreference = preference;
       document.documentElement.dataset.theme = theme;
     })();
   </script>

@@ -420,9 +420,12 @@ export default function Player() {
   const [errDetail, setErrDetail] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [volumeInteracting, setVolumeInteracting] = useState(false);
+  const [seekDraft, setSeekDraft] = useState<number | null>(null);
+  const [loadSlow, setLoadSlow] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seekDraftRef = useRef<number | null>(null);
 
   useEffect(() => window.aurora.onStatus((next) => {
     setStatus(previous => ({ ...next, stats: next.stats ?? previous?.stats }));
@@ -522,12 +525,15 @@ export default function Player() {
         case 'ArrowDown': if (volLocked) return; e.preventDefault(); window.aurora.mpv('add', 'volume', -5); break;
         case 'm': case 'M': if (volLocked) return; window.aurora.mpv('cycle', 'mute'); break;
         case 'f': case 'F': window.aurora.toggleFullscreen(); break;
-        case 'Escape': setMenu(null); setDrawer(false); setCtxMenu(null); setPlayErr(null); break;
+        case 'Escape':
+          if (playErr) window.aurora.stop();
+          else { setMenu(null); setDrawer(false); setCtxMenu(null); }
+          break;
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [playLocked, volLocked]);
+  }, [playLocked, volLocked, playErr]);
 
   /* ----- 单击暂停 / 双击全屏（e.detail 去抖） ----- */
   const onVideoClick = (e: React.MouseEvent) => {
@@ -576,14 +582,8 @@ export default function Player() {
 
   /* ----- 进度条 ----- */
   const dur = status?.duration ?? 0;
-  const seekFromEvent = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (playLocked) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-    window.aurora.mpv('seek', frac * 100, 'absolute-percent');
-  };
   const lastThumbT = useRef(-1);
-  const onSeekHover = (e: React.PointerEvent<HTMLDivElement>) => {
+  const onSeekHover = (e: React.PointerEvent<HTMLElement>) => {
     if (dur <= 0 || playLocked) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
@@ -600,9 +600,29 @@ export default function Player() {
   };
 
   const pos = status?.timePos ?? 0;
-  const pct = dur > 0 ? (pos / dur) * 100 : 0;
+  const shownPos = seekDraft ?? pos;
+  const pct = dur > 0 ? (shownPos / dur) * 100 : 0;
   // 视频就绪（拿到首个有效状态）后才透出下层 mpv 画面，否则保持黑场
   const ready = !!status && !status.idle && status.title != null;
+
+  useEffect(() => {
+    if (ready || playErr) { setLoadSlow(false); return; }
+    const timer = setTimeout(() => setLoadSlow(true), 8000);
+    return () => clearTimeout(timer);
+  }, [ready, playErr]);
+
+  const updateSeekDraft = (value: number) => {
+    const next = Math.min(Math.max(0, value), dur || 0);
+    seekDraftRef.current = next;
+    setSeekDraft(next);
+  };
+  const commitSeek = () => {
+    const next = seekDraftRef.current;
+    if (next == null || dur <= 0 || playLocked) return;
+    seekDraftRef.current = null;
+    setSeekDraft(null);
+    window.aurora.mpv('seek', next / dur * 100, 'absolute-percent');
+  };
 
   const audioTracks = meta?.tracks.filter((t) => t.type === 'audio') ?? [];
   const subTracks = meta?.tracks.filter((t) => t.type === 'sub') ?? [];
@@ -652,6 +672,15 @@ export default function Player() {
         <div key={d} className={`rz rz-${d}`} onMouseDown={onResizeMouseDown(d)} />
       ))}
 
+      {!ready && !playErr && (
+        <div className="play-loading" role="status" aria-live="polite">
+          <div className="loading-ring" aria-hidden="true" />
+          <strong>{loadSlow ? '打开时间比预期更长' : '正在打开媒体'}</strong>
+          <span>{loadSlow ? '请检查网络或媒体文件是否仍可访问。' : '正在连接播放器并分析媒体信息…'}</span>
+          {loadSlow && <button onClick={(e) => { e.stopPropagation(); window.aurora.stop(); }}>返回首页</button>}
+        </div>
+      )}
+
       {/* 顶部信息条：仅标题 + 规格摘要 + CASTING 徽标（随 idle 淡出） */}
       <div className="top-info" onMouseDown={onDragMouseDown} onClick={(e) => e.stopPropagation()}>
         {status?.casting && (
@@ -695,12 +724,18 @@ export default function Player() {
               {bubble.ch && <span className="ch">{bubble.ch}</span>}
             </div>
           )}
-          <div className="seekbar" onPointerDown={seekFromEvent} onPointerMove={onSeekHover}>
+          <div className="seekbar" onPointerMove={onSeekHover}>
             <div className="played" style={{ width: `${pct}%` }} />
             {dur > 0 && meta?.chapters.map((c, i) => (
               <div key={i} className="chapter-dot" style={{ left: `${(c.time / dur) * 100}%` }} />
             ))}
             <div className="knob" style={{ left: `${pct}%` }} />
+            <input className="seek-input" type="range" min={0} max={Math.max(dur, 0)} step={0.1}
+              value={Math.min(shownPos, dur || 0)} disabled={playLocked || dur <= 0}
+              aria-label="播放进度" aria-valuetext={`${fmt(shownPos)} / ${fmt(dur)}`}
+              onChange={(e) => updateSeekDraft(Number(e.target.value))}
+              onPointerUp={commitSeek} onPointerCancel={commitSeek}
+              onKeyUp={commitSeek} onBlur={commitSeek} />
           </div>
         </div>
 
@@ -768,11 +803,11 @@ export default function Player() {
       {/* 播放失败错误卡片（规范 §6 四段式；D25） */}
       {playErr && (
         <div className="err-mask" onClick={(e) => e.stopPropagation()}>
-          <div className="err-card glass-3">
+          <div className="err-card glass-3" role="dialog" aria-modal="true" aria-labelledby="play-error-title">
             <button className="err-close" title="关闭" onClick={() => window.aurora.stop()}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 6L6 18M6 6l12 12"/></svg>
             </button>
-            <div className="err-title">
+            <div className="err-title" id="play-error-title">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 8v5M12 16.5h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
               无法播放该文件
             </div>
@@ -780,7 +815,7 @@ export default function Player() {
             <div className="err-row"><label>已尝试</label><span>{playErr.attempted}</span></div>
             {playErr.file && <div className="err-row file"><label>文件</label><span title={playErr.file}>{playErr.file}</span></div>}
             <div className="err-ops">
-              <button className="primary" onClick={() => { setPlayErr(null); window.aurora.retryPlayback(true); }}>切换软件解码</button>
+              <button className="primary" autoFocus onClick={() => { setPlayErr(null); window.aurora.retryPlayback(true); }}>切换软件解码</button>
               <button onClick={() => setErrDetail(!errDetail)}>{errDetail ? '收起详情' : '查看详情'}</button>
               <button onClick={() => { window.aurora.exportLog().then((p) => showToast(p ? `已导出日志：${p}` : '导出取消')); }}>导出日志</button>
               <button onClick={() => { setPlayErr(null); window.aurora.retryPlayback(false); }}>重试</button>

@@ -15,6 +15,23 @@ function detect(): Appearance {
   return mql?.matches ? 'dark' : 'light';
 }
 
+function preference(): 'auto' | Appearance {
+  const value = document.documentElement.dataset.themePreference;
+  return value === 'light' || value === 'dark' ? value : 'auto';
+}
+
+function resolveSystem(): Appearance {
+  return mql?.matches ? 'dark' : 'light';
+}
+
+function applyAutoAppearance(): void {
+  if (preference() !== 'auto') return;
+  const resolved = resolveSystem();
+  if (document.documentElement.dataset.theme !== resolved) {
+    document.documentElement.dataset.theme = resolved;
+  }
+}
+
 function refresh(): void {
   current = detect();
   subs.forEach((cb) => cb());
@@ -25,22 +42,19 @@ export const AppearanceProbe = {
   on(cb: () => void): () => void { subs.add(cb); return () => subs.delete(cb); },
   /** 初始化：补齐 data-theme（auto → 系统解析），监听系统 + 属性变化 */
   init(): void {
-    if (!document.documentElement.dataset.theme || document.documentElement.dataset.theme === 'auto') {
-      document.documentElement.dataset.theme = detect();
+    if (!document.documentElement.dataset.themePreference) {
+      document.documentElement.dataset.themePreference = 'auto';
     }
+    applyAutoAppearance();
     current = detect();
     mql?.addEventListener?.('change', () => {
-      // 仅当未被手动 light/dark 覆盖时跟随系统
-      const dt = document.documentElement.dataset.theme;
-      if (!dt || dt === 'auto') document.documentElement.dataset.theme = detect();
+      applyAutoAppearance();
       refresh();
     });
     const mo = new MutationObserver(() => {
-      // 归一化：data-theme='auto' 或缺失 → 解析为 light/dark（避免注入块不匹配）
-      const dt = document.documentElement.dataset.theme;
-      if (!dt || dt === 'auto') document.documentElement.dataset.theme = detect();
+      applyAutoAppearance();
       refresh();
     });
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-theme-preference'] });
   },
 };
