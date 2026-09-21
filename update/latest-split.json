@@ -1,19 +1,19 @@
 {
   "schema": 1,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "platform": "win32-x64",
-  "size": 137073479,
-  "sha512": "Vz2IhIygNyio8ugDWeRKGEfGe3sqr6X5JMhtpY9j5TWxAYGb3wJliB4rAFr6H0b2/DGeJftnwlY7M+S8BJ16Ow==",
+  "size": 137075016,
+  "sha512": "ErOMXkv8QQW/hkZe56TnhXTXFS2Rc/xlXnbRdofBLYNJyeliQ4MaDGp244YVjSdUXG0swCSsURdZtP5R9CcXyQ==",
   "parts": [
     {
-      "url": "https://gitee.com/is-haohao/Aurora-Player/releases/download/v1.0.2/AuroraPlayer-Setup-1.0.2.exe.part001",
+      "url": "https://gitee.com/is-haohao/Aurora-Player/releases/download/v1.0.3/AuroraPlayer-Setup-1.0.3.exe.part001",
       "size": 83886080,
-      "sha512": "V/KFe0Myf07fzrjOUMcOFUS2apcpDJYeLUn6XfGGNqEZfj4BguMXiOvdP1jzOddrht7dYD7IqxWWUmz7G5YyPQ=="
+      "sha512": "M37sllUFt7X27oXsrGvYGjPExQoFE6UbFKP/AHpxyhuYp57khtxIqZzzA0sorm9oRjyMrJf83j42UdGlGyfhfw=="
     },
     {
-      "url": "https://gitee.com/is-haohao/Aurora-Player/releases/download/v1.0.2/AuroraPlayer-Setup-1.0.2.exe.part002",
-      "size": 53187399,
-      "sha512": "MHs06fkncHwNt3TYL5GRoll7mFQ+mXVSCjxSFtKXbBN5DASruofyb1sedERMfgqRX2SQKjz+yVqxMETxXf5rpQ=="
+      "url": "https://gitee.com/is-haohao/Aurora-Player/releases/download/v1.0.3/AuroraPlayer-Setup-1.0.3.exe.part002",
+      "size": 53188936,
+      "sha512": "ERqQk/DYCZGIZfdNCkTO5vPnWvlQoEmCXJk4ifsjjfc+iLczdGMacdtcG/mdI7IdxL6AJTD4a5n1Q8V/vIDtiQ=="
     }
   ]
 }
